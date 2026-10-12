@@ -48,10 +48,10 @@ fn build_catalog() -> StdlibCatalog {
 
     for entry in ori_types::stdlib::stdlib_runtime_functions() {
         let canonical = entry.canonical_path.to_string();
-        let (module, name) = canonical
-            .rsplit_once('.')
-            .map(|(m, n)| (m.to_string(), n.to_string()))
-            .unwrap_or_else(|| (canonical.clone(), canonical.clone()));
+        let (module, name) = canonical.rsplit_once('.').map_or_else(
+            || (canonical.clone(), canonical.clone()),
+            |(m, n)| (m.to_string(), n.to_string()),
+        );
 
         let signature = ori_driver::pipeline::stdlib_doc_signature(&canonical)
             .map(str::to_string)
@@ -370,7 +370,7 @@ fn extract_doc_comments(source: &str, start_offset: usize) -> Option<String> {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             if in_block {
-                lines.push("".to_string());
+                lines.push(String::new());
                 continue;
             }
             break;
@@ -526,8 +526,7 @@ pub fn import_alias_map(source: &str) -> HashMap<String, String> {
                 let alias = item
                     .alias
                     .as_ref()
-                    .map(|n| n.text.to_string())
-                    .unwrap_or_else(|| item.name.text.to_string());
+                    .map_or_else(|| item.name.text.to_string(), |n| n.text.to_string());
                 map.insert(alias, format!("{}.{}", module, item.name.text));
             }
         } else if let Some(alias) = import.alias.as_ref() {

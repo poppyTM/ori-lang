@@ -1,4 +1,7 @@
-use crate::hir::*;
+use crate::hir::{
+    HirArg, HirBlock, HirExpr, HirExprKind, HirFunc, HirLValue, HirModule, HirParam, HirPattern,
+    HirStmt, HirStrPart,
+};
 use ori_types::Ty;
 use smol_str::SmolStr;
 use std::collections::HashMap;
@@ -78,7 +81,7 @@ impl MonoState {
         }
 
         let specialized_name = SmolStr::new(format!("{}.__mono_{}", name, mono_suffix(&key)));
-        let mut specialized = template.clone();
+        let mut specialized = template;
         specialized.name = specialized_name.clone();
         substitute_func(&mut specialized, &subst);
 
@@ -86,8 +89,7 @@ impl MonoState {
             return None;
         }
 
-        self.specializations
-            .insert(key.clone(), specialized_name.clone());
+        self.specializations.insert(key, specialized_name.clone());
         rewrite_block_calls(&mut specialized.body, self);
         self.generated.push(specialized);
 

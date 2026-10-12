@@ -4,7 +4,7 @@ use ori_ast::expr::{Expr, UnaryOp};
 use ori_ast::pattern::{NamedPattern, Pattern};
 use ori_lexer::TokenKind;
 
-impl<'src> Parser<'src> {
+impl Parser<'_> {
     /// A full arm pattern, including `a or b or c` alternatives.
     ///
     /// Safe to look for `or` here: literal patterns are parsed with
@@ -33,7 +33,7 @@ impl<'src> Parser<'src> {
         while self.eat(&TokenKind::Or) {
             alternatives.push(self.parse_pattern_alternative()?);
         }
-        let end = alternatives.last().map(|p| p.span()).unwrap_or(start);
+        let end = alternatives.last().map_or(start, ori_ast::Pattern::span);
         Some(Pattern::Or(alternatives, start.cover(end)))
     }
 

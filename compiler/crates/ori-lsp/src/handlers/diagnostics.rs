@@ -27,9 +27,9 @@ pub fn diagnostics_for_path(
             }
 
             Some(LspDiagnostic {
-                range: label
-                    .map(|label| range_for_label(cache, label))
-                    .unwrap_or_else(position::default_range),
+                range: label.map_or_else(position::default_range, |label| {
+                    range_for_label(cache, label)
+                }),
                 severity: Some(match diagnostic.severity {
                     Severity::Error => DiagnosticSeverity::ERROR,
                     Severity::Warning => DiagnosticSeverity::WARNING,
@@ -151,8 +151,7 @@ pub fn project_diagnostics_for_path(
 fn label_points_to_path(cache: &SourceCache, label: &Label, target: &Path) -> bool {
     cache
         .get(label.file_id)
-        .map(|file| uri::canonical_path(&file.path) == target)
-        .unwrap_or(false)
+        .is_some_and(|file| uri::canonical_path(&file.path) == target)
 }
 
 fn range_for_label(cache: &SourceCache, label: &Label) -> Range {

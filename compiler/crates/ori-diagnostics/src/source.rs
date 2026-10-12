@@ -66,7 +66,7 @@ impl SourceFile {
     }
 }
 
-fn previous_char_boundary(source: &str, mut offset: usize) -> usize {
+const fn previous_char_boundary(source: &str, mut offset: usize) -> usize {
     while offset > 0 && !source.is_char_boundary(offset) {
         offset -= 1;
     }

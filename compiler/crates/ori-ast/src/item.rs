@@ -15,7 +15,7 @@ pub struct SourceFile {
     pub span: Span,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NamespaceDecl {
     pub name: QualifiedName,
     pub span: Span,
@@ -30,7 +30,7 @@ pub struct ImportDecl {
     pub span: Span,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportItem {
     pub name: Name,
     pub alias: Option<Name>,
@@ -64,18 +64,18 @@ pub enum Item {
 }
 
 impl Item {
-    pub fn span(&self) -> Span {
+    pub const fn span(&self) -> Span {
         match self {
-            Item::Func(f) => f.span,
-            Item::Struct(s) => s.span,
-            Item::Enum(e) => e.span,
-            Item::Trait(t) => t.span,
-            Item::Apply(a) => a.span,
-            Item::Alias(a) => a.span,
-            Item::Newtype(n) => n.span,
-            Item::Const(c) => c.span,
-            Item::Var(v) => v.span,
-            Item::Extern(e) => e.span,
+            Self::Func(f) => f.span,
+            Self::Struct(s) => s.span,
+            Self::Enum(e) => e.span,
+            Self::Trait(t) => t.span,
+            Self::Apply(a) => a.span,
+            Self::Alias(a) => a.span,
+            Self::Newtype(n) => n.span,
+            Self::Const(c) => c.span,
+            Self::Var(v) => v.span,
+            Self::Extern(e) => e.span,
         }
     }
 }
@@ -177,7 +177,7 @@ pub struct EnumVariant {
     pub span: Span,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NamedField {
     pub name: Name,
     pub ty: Type,
@@ -256,17 +256,17 @@ pub struct ApplyUseSection {
 }
 
 impl ApplyMember {
-    pub fn span(&self) -> Span {
+    pub const fn span(&self) -> Span {
         match self {
-            ApplyMember::Method(m) => m.span,
-            ApplyMember::Bind { span, .. } => *span,
+            Self::Method(m) => m.span,
+            Self::Bind { span, .. } => *span,
         }
     }
 
-    pub fn slot_name(&self) -> &Name {
+    pub const fn slot_name(&self) -> &Name {
         match self {
-            ApplyMember::Method(m) => &m.name,
-            ApplyMember::Bind { slot, .. } => slot,
+            Self::Method(m) => &m.name,
+            Self::Bind { slot, .. } => slot,
         }
     }
 }
@@ -274,7 +274,7 @@ impl ApplyMember {
 // ── Alias ─────────────────────────────────────────────────────────────────────
 
 /// `alias Name<T> = Type`
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AliasDecl {
     pub visibility: Visibility,
     pub name: Name,
@@ -288,7 +288,7 @@ pub struct AliasDecl {
 /// The counterpart of `alias`: same representation, but a **distinct** type.
 /// `alias` says "another name for this type" (values flow freely); `newtype`
 /// says "a new type shaped like this one" (conversion is written out).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewtypeDecl {
     pub visibility: Visibility,
     pub name: Name,

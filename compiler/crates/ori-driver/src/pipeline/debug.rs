@@ -195,7 +195,7 @@ fn collect_debug_pattern_variables(
     }
 }
 
-fn statement_span(statement: &HirStmt) -> u32 {
+const fn statement_span(statement: &HirStmt) -> u32 {
     match statement {
         HirStmt::Let { span, .. }
         | HirStmt::Assign { span, .. }

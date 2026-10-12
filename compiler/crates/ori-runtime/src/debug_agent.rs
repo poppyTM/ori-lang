@@ -69,10 +69,10 @@ fn static_payloads() -> &'static Mutex<HashMap<usize, usize>> {
 
 fn normalize_path(path: &str) -> String {
     // Compare by file name + suffix if absolute paths differ (cwd relative).
-    std::path::Path::new(path)
-        .canonicalize()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| path.replace('\\', "/"))
+    std::path::Path::new(path).canonicalize().map_or_else(
+        |_| path.replace('\\', "/"),
+        |p| p.to_string_lossy().to_string(),
+    )
 }
 
 fn new_debug_state() -> DebugState {
@@ -101,7 +101,7 @@ unsafe fn read_debug_text(ptr: *const u8, len: u32) -> String {
     String::from_utf8_lossy(slice).into_owned()
 }
 
-fn debug_type_name(type_tag: u32) -> &'static str {
+const fn debug_type_name(type_tag: u32) -> &'static str {
     match type_tag {
         1 => "bool",
         2 => "int",
@@ -319,7 +319,7 @@ fn wait_while_paused(state: &mut DebugState) {
     // Block until continue/step/terminate.
     // Use longer read timeout while paused.
     if let Some(stream) = state.stream.as_ref() {
-        let _ = stream.set_read_timeout(Some(Duration::from_secs(3600)));
+        let _ = stream.set_read_timeout(Some(Duration::from_hours(1)));
     }
     loop {
         if state.terminated {
@@ -349,11 +349,10 @@ fn wait_while_paused(state: &mut DebugState) {
                     let t = v
                         .get("type")
                         .and_then(|t| t.as_str())
-                        .map(|s| s.to_string());
+                        .map(std::string::ToString::to_string);
                     apply_command(state, &v);
-                    match t.as_deref() {
-                        Some("continue") | Some("step") | Some("terminate") => break,
-                        _ => {}
+                    if let Some("continue" | "step" | "terminate") = t.as_deref() {
+                        break;
                     }
                 }
             }

@@ -464,12 +464,13 @@ fn parse_json_string(source: &str) -> Option<(String, usize)> {
     None
 }
 
-pub(crate) fn native_target_triple() -> String {
+pub fn native_target_triple() -> String {
     std::env::var("ORI_TARGET_TRIPLE")
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .map(|value| value.trim().to_string())
-        .unwrap_or_else(default_native_target_triple)
+        .map_or_else(default_native_target_triple, |value| {
+            value.trim().to_string()
+        })
 }
 
 /// Native Cranelift and the staged runtime currently target the host triple.
@@ -479,7 +480,7 @@ pub(crate) fn native_target_triple() -> String {
 /// host machine code and then link it with the wrong runtime artifact. Fail
 /// before code generation until a real cross-target backend and runtime matrix
 /// exists.
-pub(crate) fn ensure_native_codegen_target() -> Result<(), String> {
+pub fn ensure_native_codegen_target() -> Result<(), String> {
     let requested = native_target_triple();
     let host = default_native_target_triple();
     validate_native_codegen_target(&requested, &host)
@@ -536,19 +537,19 @@ fn native_runtime_cdylib_name(target: &str) -> &'static str {
 
 pub(super) fn native_lib_cdylib_name(target: &str, name: &str) -> String {
     if target.contains("windows-msvc") {
-        format!("{}.dll", name)
+        format!("{name}.dll")
     } else if target.contains("apple-darwin") {
-        format!("lib{}.dylib", name)
+        format!("lib{name}.dylib")
     } else {
-        format!("lib{}.so", name)
+        format!("lib{name}.so")
     }
 }
 
 pub(super) fn native_lib_static_name(target: &str, name: &str) -> String {
     if target.contains("windows-msvc") {
-        format!("{}.lib", name)
+        format!("{name}.lib")
     } else {
-        format!("lib{}.a", name)
+        format!("lib{name}.a")
     }
 }
 
@@ -583,8 +584,7 @@ fn cargo_runtime_candidates(target: &str, artifact: &str) -> Vec<PathBuf> {
 
 fn cargo_target_dir() -> PathBuf {
     std::env::var("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| cargo_workspace_root().join("target"))
+        .map_or_else(|_| cargo_workspace_root().join("target"), PathBuf::from)
 }
 
 /// The Cargo workspace holding this crate (`<repo>/compiler`): where the

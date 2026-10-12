@@ -10,7 +10,7 @@ pub struct Token {
 }
 
 impl Token {
-    pub fn new(kind: TokenKind, span: Span) -> Self {
+    pub const fn new(kind: TokenKind, span: Span) -> Self {
         Self { kind, span }
     }
 
@@ -61,28 +61,27 @@ pub fn lex(source: &str, file_id: FileId, sink: &mut DiagnosticSink) -> Vec<Toke
             raw_span.end + initial_offset,
         );
 
-        match result {
-            Ok(kind) => tokens.push(Token::new(kind, span)),
-            Err(()) => {
-                // logos returns `Err(())` for unrecognised characters.
-                let bad = &source[span.start as usize..span.end as usize];
-                let (message, action) = if bad == "\u{feff}" {
-                    (
-                        "byte order mark is only allowed at the start of a file".to_string(),
-                        "remove this byte order mark",
-                    )
-                } else {
-                    (
-                        format!("unexpected character `{}`", bad.escape_default()),
-                        "remove or replace this character",
-                    )
-                };
-                sink.emit(
-                    Diagnostic::error("lex.unexpected_character", message)
-                        .with_label(Label::primary(file_id, span, "not a valid token"))
-                        .with_action(action),
-                );
-            }
+        if let Ok(kind) = result {
+            tokens.push(Token::new(kind, span))
+        } else {
+            // logos returns `Err(())` for unrecognised characters.
+            let bad = &source[span.start as usize..span.end as usize];
+            let (message, action) = if bad == "\u{feff}" {
+                (
+                    "byte order mark is only allowed at the start of a file".to_string(),
+                    "remove this byte order mark",
+                )
+            } else {
+                (
+                    format!("unexpected character `{}`", bad.escape_default()),
+                    "remove or replace this character",
+                )
+            };
+            sink.emit(
+                Diagnostic::error("lex.unexpected_character", message)
+                    .with_label(Label::primary(file_id, span, "not a valid token"))
+                    .with_action(action),
+            );
         }
     }
 
@@ -96,10 +95,9 @@ enum LexPreflightDiagnostic {
 }
 
 impl LexPreflightDiagnostic {
-    fn span(self) -> Span {
+    const fn span(self) -> Span {
         match self {
-            LexPreflightDiagnostic::UnclosedBlockComment(span)
-            | LexPreflightDiagnostic::UnterminatedString(span) => span,
+            Self::UnclosedBlockComment(span) | Self::UnterminatedString(span) => span,
         }
     }
 }

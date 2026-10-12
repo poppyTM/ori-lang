@@ -68,7 +68,7 @@ pub struct OriEmbedCallValue {
 }
 
 impl OriEmbedCallValue {
-    fn void() -> Self {
+    const fn void() -> Self {
         Self {
             tag: OriHostValueTag::Void,
             int_value: 0,
@@ -103,6 +103,7 @@ pub type OriEmbedCallback = unsafe extern "C-unwind" fn(
 ) -> i32;
 
 /// Synchronous dispatch task used to marshal a callback to its owner thread.
+///
 /// Synchronous task passed to a host event-loop dispatcher. `C-unwind` keeps a
 /// Rust panic from crossing a non-unwind ABI if the callback is invoked on the
 /// required owner thread; the outer aggregate trampoline still translates it
@@ -318,7 +319,7 @@ fn c_string(value: impl AsRef<str>) -> CString {
     CString::new(sanitized).expect("NUL bytes were replaced")
 }
 
-fn status_for_error(error: &super::OriEmbedError) -> OriEmbedStatus {
+const fn status_for_error(error: &super::OriEmbedError) -> OriEmbedStatus {
     match error {
         super::OriEmbedError::WrongThread => OriEmbedStatus::WrongThread,
         super::OriEmbedError::CapabilityDenied { .. } => OriEmbedStatus::CapabilityDenied,
@@ -405,7 +406,7 @@ unsafe fn utf8_input<'a>(data: *const u8, len: usize) -> Result<&'a str, OriEmbe
     str::from_utf8(bytes).map_err(|_| OriEmbedStatus::InvalidArgument)
 }
 
-fn tag_to_scalar(tag: OriHostValueTag) -> Result<Option<OriScalarType>, OriEmbedStatus> {
+const fn tag_to_scalar(tag: OriHostValueTag) -> Result<Option<OriScalarType>, OriEmbedStatus> {
     match tag {
         OriHostValueTag::Void => Ok(None),
         OriHostValueTag::Bool => Ok(Some(OriScalarType::Bool)),
@@ -457,7 +458,10 @@ unsafe fn call_value_from_c(
         OriHostValueTag::Int => Ok(OriValue::Int(input.int_value)),
         OriHostValueTag::Float => Ok(OriValue::Float(input.float_value)),
         OriHostValueTag::String => {
-            if !input.managed.is_null() {
+            if input.managed.is_null() {
+                let value = unsafe { utf8_input(input.data, input.len)? };
+                OriValue::string(value).map_err(|_| OriEmbedStatus::InvalidArgument)
+            } else {
                 // SAFETY: validated below before borrowing the owned copy.
                 let managed = unsafe { &*input.managed };
                 if managed.context_id != context_id {
@@ -467,9 +471,6 @@ unsafe fn call_value_from_c(
                     .value
                     .as_str()
                     .ok_or(OriEmbedStatus::InvalidArgument)?;
-                OriValue::string(value).map_err(|_| OriEmbedStatus::InvalidArgument)
-            } else {
-                let value = unsafe { utf8_input(input.data, input.len)? };
                 OriValue::string(value).map_err(|_| OriEmbedStatus::InvalidArgument)
             }
         }
@@ -543,7 +544,7 @@ fn call_value_to_c(context: &OriEmbedContext, value: Option<OriValue>) -> OriEmb
 
 /// Return the C Host ABI schema version.
 #[no_mangle]
-pub extern "C" fn ori_embed_abi_version() -> u32 {
+pub const extern "C" fn ori_embed_abi_version() -> u32 {
     EMBED_ABI_VERSION
 }
 
@@ -989,9 +990,7 @@ pub unsafe extern "C" fn ori_embed_callback_unregister(
 /// `context` must be live and accessed on its owner thread.
 #[no_mangle]
 pub unsafe extern "C" fn ori_embed_diagnostic_count(context: *mut OriEmbedContext) -> usize {
-    unsafe { owner_state(context) }
-        .map(|state| state.diagnostics.len())
-        .unwrap_or(0)
+    unsafe { owner_state(context) }.map_or(0, |state| state.diagnostics.len())
 }
 
 /// Borrow one structured diagnostic.
@@ -1040,9 +1039,7 @@ pub unsafe extern "C" fn ori_embed_diagnostic(
 pub unsafe extern "C" fn ori_embed_last_error(
     context: *mut OriEmbedContext,
 ) -> *const std::ffi::c_char {
-    unsafe { owner_state(context) }
-        .map(|state| state.last_error.as_ptr())
-        .unwrap_or(std::ptr::null())
+    unsafe { owner_state(context) }.map_or(std::ptr::null(), |state| state.last_error.as_ptr())
 }
 
 /// Register one nominal opaque type in this context.
@@ -1213,9 +1210,9 @@ pub unsafe extern "C" fn ori_embed_opaque_release(handle: *mut OriEmbedOpaqueHan
 pub unsafe extern "C" fn ori_embed_context_outstanding_handles(
     context: *mut OriEmbedContext,
 ) -> usize {
-    unsafe { context_ref(context) }
-        .map(|context| context.outstanding_handles.load(Ordering::Acquire))
-        .unwrap_or(0)
+    unsafe { context_ref(context) }.map_or(0, |context| {
+        context.outstanding_handles.load(Ordering::Acquire)
+    })
 }
 
 /// Destroy a context only after every public handle has been released.

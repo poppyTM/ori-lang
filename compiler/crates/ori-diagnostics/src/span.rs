@@ -9,10 +9,10 @@ pub struct Span {
 }
 
 impl Span {
-    pub const DUMMY: Span = Span { start: 0, end: 0 };
+    pub const DUMMY: Self = Self { start: 0, end: 0 };
 
     #[inline]
-    pub fn new(start: usize, end: usize) -> Self {
+    pub const fn new(start: usize, end: usize) -> Self {
         Self {
             start: start as u32,
             end: end as u32,
@@ -20,26 +20,26 @@ impl Span {
     }
 
     #[inline]
-    pub fn len(self) -> usize {
+    pub const fn len(self) -> usize {
         (self.end - self.start) as usize
     }
 
     #[inline]
-    pub fn is_empty(self) -> bool {
+    pub const fn is_empty(self) -> bool {
         self.start >= self.end
     }
 
     /// Returns the smallest span that covers both `self` and `other`.
     #[inline]
-    pub fn cover(self, other: Span) -> Span {
-        Span {
+    pub fn cover(self, other: Self) -> Self {
+        Self {
             start: self.start.min(other.start),
             end: self.end.max(other.end),
         }
     }
 
     #[inline]
-    pub fn as_range(self) -> std::ops::Range<usize> {
+    pub const fn as_range(self) -> std::ops::Range<usize> {
         self.start as usize..self.end as usize
     }
 }

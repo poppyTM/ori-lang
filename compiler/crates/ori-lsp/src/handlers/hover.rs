@@ -29,7 +29,7 @@ pub fn builtin_type_hover(symbol: &str) -> Option<String> {
 }
 
 /// Create a Hover response from markdown content.
-pub fn markdown_hover(content: String) -> Hover {
+pub const fn markdown_hover(content: String) -> Hover {
     Hover {
         contents: HoverContents::Markup(MarkupContent {
             kind: MarkupKind::Markdown,

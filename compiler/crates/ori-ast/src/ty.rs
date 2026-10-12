@@ -17,19 +17,19 @@ pub enum ConstExpr {
     Name(QualifiedName),
     Unary {
         op: UnaryOp,
-        operand: Box<ConstExpr>,
+        operand: Box<Self>,
         span: Span,
     },
     Binary {
         op: BinaryOp,
-        lhs: Box<ConstExpr>,
-        rhs: Box<ConstExpr>,
+        lhs: Box<Self>,
+        rhs: Box<Self>,
         span: Span,
     },
     If {
-        condition: Box<ConstExpr>,
-        then_expr: Box<ConstExpr>,
-        else_expr: Box<ConstExpr>,
+        condition: Box<Self>,
+        then_expr: Box<Self>,
+        else_expr: Box<Self>,
         span: Span,
     },
 }
@@ -68,7 +68,7 @@ impl ConstExpr {
         }
     }
 
-    pub fn span(&self) -> Span {
+    pub const fn span(&self) -> Span {
         match self {
             Self::Int { span, .. }
             | Self::Bool(_, span)
@@ -121,44 +121,44 @@ pub enum Type {
     },
 
     // ── Built-in generic types ────────────────────────────────────────────────
-    Optional(Box<Type>, Span),
-    Result(Box<Type>, Box<Type>, Span),
-    List(Box<Type>, Span),
+    Optional(Box<Self>, Span),
+    Result(Box<Self>, Box<Self>, Span),
+    List(Box<Self>, Span),
     /// `buffer[T]` — a mutable, contiguous, fixed-length sequence.
-    Buffer(Box<Type>, Span),
+    Buffer(Box<Self>, Span),
     /// `slice[T]` — a read-only window over a `list[T]`.
-    Slice(Box<Type>, Span),
+    Slice(Box<Self>, Span),
     /// `array[T, size: N]` — fixed length, part of the type.
     ///
     /// Distinct from `list[T]`: the length is known at compile time, so the
     /// elements live inline instead of behind a heap pointer, and two arrays of
     /// different lengths are different types.
     Array {
-        elem: Box<Type>,
+        elem: Box<Self>,
         size: ConstExpr,
         span: Span,
     },
     /// `simd[T, lanes: N]` or `simd[T, N]` — portable fixed-width SIMD vector (LANG-SIMD-1).
     Simd {
-        elem: Box<Type>,
+        elem: Box<Self>,
         lanes: u16,
         span: Span,
     },
-    Map(Box<Type>, Box<Type>, Span),
-    Set(Box<Type>, Span),
-    Range(Box<Type>, Span),
-    Lazy(Box<Type>, Span),
-    Handle(Box<Type>, Span),
+    Map(Box<Self>, Box<Self>, Span),
+    Set(Box<Self>, Span),
+    Range(Box<Self>, Span),
+    Lazy(Box<Self>, Span),
+    Handle(Box<Self>, Span),
     /// `any<Trait>` — dynamic dispatch.
     Any(QualifiedName, Span),
     /// `tuple<A, B, …>` — always at least 2 type arguments.
-    Tuple(Vec<Type>, Span),
+    Tuple(Vec<Self>, Span),
 
     // ── Callable types ────────────────────────────────────────────────────────
     /// `func(T, U) -> R`  or `func(T)` (void return → `None`).
     Func {
-        params: Vec<Type>,
-        return_ty: Option<Box<Type>>,
+        params: Vec<Self>,
+        return_ty: Option<Box<Self>>,
         span: Span,
     },
 
@@ -166,47 +166,47 @@ pub enum Type {
     /// `MyContainer<T>`, `Either<Left, Right>`.
     Generic {
         name: QualifiedName,
-        args: Vec<Type>,
+        args: Vec<Self>,
         span: Span,
     },
 }
 
 impl Type {
-    pub fn span(&self) -> Span {
+    pub const fn span(&self) -> Span {
         match self {
-            Type::Bool(s)
-            | Type::Int(s)
-            | Type::Int8(s)
-            | Type::Int16(s)
-            | Type::Int32(s)
-            | Type::Int64(s)
-            | Type::U8(s)
-            | Type::U16(s)
-            | Type::U32(s)
-            | Type::U64(s)
-            | Type::Float(s)
-            | Type::Float32(s)
-            | Type::Float64(s)
-            | Type::String(s)
-            | Type::Bytes(s)
-            | Type::Void(s) => *s,
-            Type::Named(q) => q.span,
-            Type::ConstArg { span, .. } => *span,
-            Type::Buffer(_, s)
-            | Type::Slice(_, s)
-            | Type::Array { span: s, .. }
-            | Type::Simd { span: s, .. }
-            | Type::Optional(_, s)
-            | Type::List(_, s)
-            | Type::Set(_, s)
-            | Type::Range(_, s)
-            | Type::Lazy(_, s)
-            | Type::Handle(_, s)
-            | Type::Any(_, s)
-            | Type::Tuple(_, s)
-            | Type::Result(_, _, s)
-            | Type::Map(_, _, s) => *s,
-            Type::Func { span, .. } | Type::Generic { span, .. } => *span,
+            Self::Bool(s)
+            | Self::Int(s)
+            | Self::Int8(s)
+            | Self::Int16(s)
+            | Self::Int32(s)
+            | Self::Int64(s)
+            | Self::U8(s)
+            | Self::U16(s)
+            | Self::U32(s)
+            | Self::U64(s)
+            | Self::Float(s)
+            | Self::Float32(s)
+            | Self::Float64(s)
+            | Self::String(s)
+            | Self::Bytes(s)
+            | Self::Void(s) => *s,
+            Self::Named(q) => q.span,
+            Self::ConstArg { span, .. } => *span,
+            Self::Buffer(_, s)
+            | Self::Slice(_, s)
+            | Self::Array { span: s, .. }
+            | Self::Simd { span: s, .. }
+            | Self::Optional(_, s)
+            | Self::List(_, s)
+            | Self::Set(_, s)
+            | Self::Range(_, s)
+            | Self::Lazy(_, s)
+            | Self::Handle(_, s)
+            | Self::Any(_, s)
+            | Self::Tuple(_, s)
+            | Self::Result(_, _, s)
+            | Self::Map(_, _, s) => *s,
+            Self::Func { span, .. } | Self::Generic { span, .. } => *span,
         }
     }
 }

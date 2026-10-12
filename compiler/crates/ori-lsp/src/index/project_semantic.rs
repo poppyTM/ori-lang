@@ -61,7 +61,7 @@ enum ProjectSymbolIdentity {
 }
 
 impl ProjectSymbolIdentity {
-    fn target(self) -> DefId {
+    const fn target(self) -> DefId {
         match self {
             Self::Definition(target) | Self::SelectiveImportAlias { target, .. } => target,
         }
@@ -217,8 +217,10 @@ impl ProjectSemanticIndex {
                             .func_sigs
                             .iter()
                             .find(|f| f.def_id == method.func_def_id)
-                            .map(|f| ty_to_str(&f.return_ty, &self.resolved))
-                            .unwrap_or_else(|| "()".to_string());
+                            .map_or_else(
+                                || "()".to_string(),
+                                |f| ty_to_str(&f.return_ty, &self.resolved),
+                            );
                         items.push(CompletionItem {
                             label: method.name.to_string(),
                             kind: Some(CompletionItemKind::METHOD),
@@ -339,8 +341,7 @@ impl ProjectSemanticIndex {
             .all_files()
             .iter()
             .find(|file| same_path(&file.path, path))
-            .map(|file| file.id)
-            .unwrap_or(ori_diagnostics::FileId(0));
+            .map_or(ori_diagnostics::FileId(0), |file| file.id);
         let context = self.file_resolution_context(path, source, file_id);
         self.symbol_identity_in_context(source, offset, &context)
     }

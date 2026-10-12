@@ -82,7 +82,7 @@ enum Commands {
         /// Local package directory or `ori.pkg.toml` path.
         #[arg(long)]
         path: Option<PathBuf>,
-        /// Override the package cache root (default: ORI_PACKAGE_CACHE or ~/.ori/packages).
+        /// Override the package cache root (default: `ORI_PACKAGE_CACHE` or ~/.ori/packages).
         #[arg(long)]
         cache: Option<PathBuf>,
     },
@@ -95,7 +95,7 @@ enum Commands {
         /// Project/package root, `ori.proj`, or `ori.pkg.toml` (default: current directory).
         #[arg(default_value = ".")]
         path: PathBuf,
-        /// Override the package cache root (default: ORI_PACKAGE_CACHE or ~/.ori/packages).
+        /// Override the package cache root (default: `ORI_PACKAGE_CACHE` or ~/.ori/packages).
         #[arg(long)]
         cache: Option<PathBuf>,
     },
@@ -317,7 +317,7 @@ enum DocFormatCli {
 fn main() {
     // The front end recurses once per syntactic level; run it on a stack the
     // compiler controls instead of whatever the platform gives `main`.
-    pipeline::with_frontend_stack(run_cli)
+    pipeline::with_frontend_stack(run_cli);
 }
 
 fn run_cli() {
@@ -344,7 +344,7 @@ fn run_cli() {
                 },
             ) {
                 Err(e) => {
-                    eprintln!("ori: {}", e);
+                    eprintln!("ori: {e}");
                     process::exit(2);
                 }
                 Ok(out) => {
@@ -370,7 +370,7 @@ fn run_cli() {
                 },
             ) {
                 Err(e) => {
-                    eprintln!("ori: {}", e);
+                    eprintln!("ori: {e}");
                     process::exit(2);
                 }
                 Ok(out) => {
@@ -383,7 +383,7 @@ fn run_cli() {
 
         Commands::Check { file } => match pipeline::run_check(file) {
             Err(e) => {
-                eprintln!("ori: {}", e);
+                eprintln!("ori: {e}");
                 process::exit(2);
             }
             Ok(out) => {
@@ -391,7 +391,7 @@ fn run_cli() {
                 let warnings = out.diagnostics.len() - errors;
                 emit::render_all(&out.cache, &out.diagnostics, color);
                 emit::print_summary(errors, warnings, color);
-                process::exit(if out.has_errors { 1 } else { 0 });
+                process::exit(i32::from(out.has_errors));
             }
         },
 
@@ -406,7 +406,7 @@ fn run_cli() {
                     pipeline::DocOptions { format: doc_format },
                 ) {
                     Err(e) => {
-                        eprintln!("ori: {}", e);
+                        eprintln!("ori: {e}");
                         process::exit(2);
                     }
                     Ok(doc) => {
@@ -421,20 +421,20 @@ fn run_cli() {
                             };
                             if let Some(path) = out {
                                 std::fs::write(path, content).unwrap_or_else(|e| {
-                                    eprintln!("ori: {}", e);
+                                    eprintln!("ori: {e}");
                                     process::exit(2);
                                 });
                             } else {
                                 print!("{content}");
                             }
                         }
-                        process::exit(if doc.has_errors { 1 } else { 0 });
+                        process::exit(i32::from(doc.has_errors));
                     }
                 }
             }
             DocAction::Check { path } => match pipeline::run_doc_check(path) {
                 Err(e) => {
-                    eprintln!("ori: {}", e);
+                    eprintln!("ori: {e}");
                     process::exit(2);
                 }
                 Ok(out) => {
@@ -442,7 +442,7 @@ fn run_cli() {
                     let warnings = out.diagnostics.len() - errors;
                     emit::render_all(&out.cache, &out.diagnostics, color);
                     emit::print_summary(errors, warnings, color);
-                    process::exit(if out.has_errors { 1 } else { 0 });
+                    process::exit(i32::from(out.has_errors));
                 }
             },
             DocAction::Export { out } => {
@@ -450,13 +450,13 @@ fn run_cli() {
                 match out {
                     Some(path) => {
                         if let Err(e) = doc_export::write_doc_export(path) {
-                            eprintln!("ori: {}", e);
+                            eprintln!("ori: {e}");
                             process::exit(2);
                         }
                     }
                     None => match doc_export::export_doc_json() {
                         Err(e) => {
-                            eprintln!("ori: {}", e);
+                            eprintln!("ori: {e}");
                             process::exit(2);
                         }
                         Ok(json) => print!("{json}"),
@@ -472,7 +472,7 @@ fn run_cli() {
                 cache_root: cache.clone(),
             }) {
                 Err(e) => {
-                    eprintln!("ori: {}", e);
+                    eprintln!("ori: {e}");
                     process::exit(2);
                 }
                 Ok(out) => {
@@ -495,7 +495,7 @@ fn run_cli() {
                 cache_root: cache.clone(),
             }) {
                 Err(e) => {
-                    eprintln!("ori: {}", e);
+                    eprintln!("ori: {e}");
                     process::exit(2);
                 }
                 Ok(out) => {
@@ -527,7 +527,7 @@ fn run_cli() {
             offline: *offline,
         }) {
             Err(e) => {
-                eprintln!("ori: {}", e);
+                eprintln!("ori: {e}");
                 process::exit(2);
             }
             Ok(out) => {
@@ -552,7 +552,7 @@ fn run_cli() {
             force: *force,
         }) {
             Err(e) => {
-                eprintln!("ori: {}", e);
+                eprintln!("ori: {e}");
                 process::exit(2);
             }
             Ok(out) => {
@@ -569,7 +569,7 @@ fn run_cli() {
             },
         ) {
             Err(e) => {
-                eprintln!("ori: {}", e);
+                eprintln!("ori: {e}");
                 process::exit(2);
             }
             Ok(out) => {
@@ -594,10 +594,10 @@ fn run_cli() {
                             eprintln!(
                                 "fail: {} (status: {})",
                                 result.name,
-                                result
-                                    .status
-                                    .map(|status| status.to_string())
-                                    .unwrap_or_else(|| "terminated".to_string())
+                                result.status.map_or_else(
+                                    || "terminated".to_string(),
+                                    |status| status.to_string()
+                                )
                             );
                             if !result.stdout.trim().is_empty() {
                                 eprintln!("stdout:\n{}", result.stdout.trim_end());
@@ -625,7 +625,7 @@ fn run_cli() {
                     }
                 }
                 let failed = out.results.iter().any(|result| !result.passed);
-                process::exit(if out.has_errors || failed { 1 } else { 0 });
+                process::exit(i32::from(out.has_errors || failed));
             }
         },
 
@@ -638,7 +638,7 @@ fn run_cli() {
                 },
             ) {
                 Err(e) => {
-                    eprintln!("ori: {}", e);
+                    eprintln!("ori: {e}");
                     process::exit(2);
                 }
                 Ok(batch) => {
@@ -650,7 +650,7 @@ fn run_cli() {
                         if !single.has_errors {
                             print!("{}", single.formatted);
                         }
-                        process::exit(if single.has_errors { 1 } else { 0 });
+                        process::exit(i32::from(single.has_errors));
                     }
 
                     for err in &batch.errors {
@@ -680,7 +680,7 @@ fn run_cli() {
                         for file in &batch.modified_files {
                             eprintln!("  formatted: {}", file.display());
                         }
-                        process::exit(if batch.errors.is_empty() { 0 } else { 1 });
+                        process::exit(i32::from(!batch.errors.is_empty()));
                     }
                     process::exit(0);
                 }
@@ -692,7 +692,7 @@ fn run_cli() {
             deny_warnings,
         } => match pipeline::run_lint(path) {
             Err(e) => {
-                eprintln!("ori: {}", e);
+                eprintln!("ori: {e}");
                 process::exit(2);
             }
             Ok(out) => {
@@ -709,7 +709,7 @@ fn run_cli() {
 
         Commands::Lex { file } => match pipeline::run_lex(file) {
             Err(e) => {
-                eprintln!("ori: {}", e);
+                eprintln!("ori: {e}");
                 process::exit(2);
             }
             Ok(out) => {
@@ -718,7 +718,7 @@ fn run_cli() {
                 }
                 let errors = out.diagnostics.iter().filter(|d| d.is_error()).count();
                 emit::render_all(&out.cache, &out.diagnostics, color);
-                process::exit(if errors > 0 { 1 } else { 0 });
+                process::exit(i32::from(errors > 0));
             }
         },
 
@@ -747,7 +747,7 @@ fn run_cli() {
                 },
             ) {
                 Err(e) => {
-                    eprintln!("ori: {}", e);
+                    eprintln!("ori: {e}");
                     process::exit(2);
                 }
                 Ok(out) => {
@@ -773,7 +773,7 @@ fn run_cli() {
                             eprintln!("header: {}", header_path.display());
                         }
                     }
-                    process::exit(if out.has_errors { 1 } else { 0 });
+                    process::exit(i32::from(out.has_errors));
                 }
             }
         }
@@ -786,7 +786,7 @@ fn run_cli() {
             if pipeline::should_use_jit_for_run() {
                 match pipeline::run_jit_with_args(file, args) {
                     Err(e) => {
-                        eprintln!("ori: {}", e);
+                        eprintln!("ori: {e}");
                         process::exit(2);
                     }
                     Ok(out) => {
@@ -813,7 +813,7 @@ fn run_cli() {
             match compile {
                 Err(e) => {
                     let _ = std::fs::remove_file(&exe);
-                    eprintln!("ori: {}", e);
+                    eprintln!("ori: {e}");
                     process::exit(2);
                 }
                 Ok(out) => {
@@ -831,7 +831,7 @@ fn run_cli() {
                     let _ = std::fs::remove_file(&out.exe_path);
                     match status {
                         Err(e) => {
-                            eprintln!("ori: {}", e);
+                            eprintln!("ori: {e}");
                             process::exit(2);
                         }
                         Ok(status) => process::exit(status.code().unwrap_or(1)),
@@ -892,7 +892,7 @@ fn run_cli() {
                 },
             ) {
                 Err(e) => {
-                    eprintln!("ori: {}", e);
+                    eprintln!("ori: {e}");
                     process::exit(2);
                 }
                 Ok(out) => {
@@ -903,7 +903,7 @@ fn run_cli() {
                     if !out.has_errors {
                         eprintln!("binary: {}", out.exe_path.display());
                     }
-                    process::exit(if out.has_errors { 1 } else { 0 });
+                    process::exit(i32::from(out.has_errors));
                 }
             }
         }
@@ -930,7 +930,7 @@ fn run_cli() {
                     eprintln!("[{icon}] {} — {}", check.name, check.detail);
                 }
             }
-            process::exit(if report.has_failures() { 1 } else { 0 });
+            process::exit(i32::from(report.has_failures()));
         }
 
         Commands::Update { check } => {
@@ -958,27 +958,26 @@ fn run_cli() {
                     println!("run `ori --version` to confirm");
                 }
                 Err(e) => {
-                    eprintln!("ori: {}", e);
+                    eprintln!("ori: {e}");
                     process::exit(1);
                 }
             }
         }
 
-        Commands::Explain { code } => match explain::explain_code(code) {
-            Some(entry) => {
+        Commands::Explain { code } => {
+            if let Some(entry) = explain::explain_code(code) {
                 print!("{}", explain::format_explanation(entry));
-            }
-            None => {
+            } else {
                 eprintln!("ori: unknown diagnostic code `{code}`");
                 eprintln!("ori: see docs/spec/13-error-catalog.md for the full catalog");
                 process::exit(2);
             }
-        },
+        }
 
         Commands::Summary { path } => {
             let target = if path.as_os_str().is_empty() || path.as_path() == Path::new(".") {
                 std::env::current_dir().unwrap_or_else(|e| {
-                    eprintln!("ori: {}", e);
+                    eprintln!("ori: {e}");
                     process::exit(2);
                 })
             } else {
@@ -991,7 +990,7 @@ fn run_cli() {
             };
             match pipeline::run_summary(&entry) {
                 Err(e) => {
-                    eprintln!("ori: {}", e);
+                    eprintln!("ori: {e}");
                     process::exit(2);
                 }
                 Ok(summary) => {
@@ -1002,14 +1001,14 @@ fn run_cli() {
 
         Commands::Parse { file } => match pipeline::run_parse(file) {
             Err(e) => {
-                eprintln!("ori: {}", e);
+                eprintln!("ori: {e}");
                 process::exit(2);
             }
             Ok(out) => {
                 println!("{:#?}", out.ast);
                 let errors = out.diagnostics.iter().filter(|d| d.is_error()).count();
                 emit::render_all(&out.cache, &out.diagnostics, color);
-                process::exit(if errors > 0 { 1 } else { 0 });
+                process::exit(i32::from(errors > 0));
             }
         },
 
@@ -1100,8 +1099,7 @@ fn temp_run_exe_path(file: &std::path::Path) -> PathBuf {
         .unwrap_or("app");
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
-        .unwrap_or(0);
+        .map_or(0, |duration| duration.as_millis());
     let mut name = format!("ori-run-{stem}-{}-{millis}", process::id());
     if cfg!(windows) {
         name.push_str(".exe");

@@ -13,9 +13,9 @@ use smol_str::SmolStr;
 /// for the smallest stack the front end runs on — the 2 MiB worker threads used
 /// by the language server and by test harnesses, in an unoptimised build — and
 /// still sits far above any readable program.
-pub(crate) const MAX_NESTING_DEPTH: u32 = 128;
+pub const MAX_NESTING_DEPTH: u32 = 128;
 
-pub(crate) struct Parser<'src> {
+pub struct Parser<'src> {
     pub tokens: &'src [Token],
     pub pos: usize,
     pub source: &'src str,
@@ -83,7 +83,7 @@ impl<'src> Parser<'src> {
     }
 
     /// Leave the level entered by a successful [`Parser::enter_nesting`].
-    pub fn leave_nesting(&mut self) {
+    pub const fn leave_nesting(&mut self) {
         self.depth = self.depth.saturating_sub(1);
     }
 
@@ -116,7 +116,7 @@ impl<'src> Parser<'src> {
                 .is_some_and(|tok| self.slice(tok.span) == keyword)
     }
 
-    pub fn at_eof(&self) -> bool {
+    pub const fn at_eof(&self) -> bool {
         self.pos >= self.tokens.len()
     }
 
@@ -155,8 +155,7 @@ impl<'src> Parser<'src> {
             let span = self.current_span();
             let found = self
                 .peek_kind()
-                .map(|k| k.display_name())
-                .unwrap_or("end of file");
+                .map_or("end of file", ori_lexer::TokenKind::display_name);
             self.error(
                 "parse.unexpected_token",
                 format!("expected {}, found {}", kind.display_name(), found),
@@ -190,7 +189,7 @@ impl<'src> Parser<'src> {
             if label != expected {
                 self.error(
                     "parse.end_label_mismatch",
-                    format!("labeled `end {label}` does not match opening `{expected}`",),
+                    format!("labeled `end {label}` does not match opening `{expected}`"),
                     end_span.cover(label_span),
                 );
             }
@@ -261,12 +260,14 @@ impl<'src> Parser<'src> {
     }
 
     pub fn current_span(&self) -> Span {
-        self.peek().map(|t| t.span).unwrap_or_else(|| {
-            self.tokens
-                .last()
-                .map(|t| Span::new(t.span.end as usize, t.span.end as usize))
-                .unwrap_or(Span::DUMMY)
-        })
+        self.peek().map_or_else(
+            || {
+                self.tokens.last().map_or(Span::DUMMY, |t| {
+                    Span::new(t.span.end as usize, t.span.end as usize)
+                })
+            },
+            |t| t.span,
+        )
     }
 
     pub fn slice(&self, span: Span) -> &str {
@@ -282,32 +283,26 @@ impl<'src> Parser<'src> {
     // ── Common grammar helpers ────────────────────────────────────────────────
 
     pub fn parse_name(&mut self) -> Option<Name> {
-        match self.peek_kind() {
-            Some(TokenKind::Ident) => {
-                let tok = self.advance().unwrap();
-                let text = SmolStr::new(self.slice(tok.span));
-                Some(Name::new(text, tok.span))
-            }
-            _ => {
-                let span = self.current_span();
-                self.error("parse.expected_identifier", "expected identifier", span);
-                None
-            }
+        if matches!(self.peek_kind(), Some(TokenKind::Ident)) {
+            let tok = self.advance().unwrap();
+            let text = SmolStr::new(self.slice(tok.span));
+            Some(Name::new(text, tok.span))
+        } else {
+            let span = self.current_span();
+            self.error("parse.expected_identifier", "expected identifier", span);
+            None
         }
     }
 
     pub fn parse_member_name(&mut self) -> Option<Name> {
-        match self.peek_kind() {
-            Some(TokenKind::Ident | TokenKind::Or) => {
-                let tok = self.advance().unwrap();
-                let text = SmolStr::new(self.slice(tok.span));
-                Some(Name::new(text, tok.span))
-            }
-            _ => {
-                let span = self.current_span();
-                self.error("parse.expected_identifier", "expected identifier", span);
-                None
-            }
+        if let Some(TokenKind::Ident | TokenKind::Or) = self.peek_kind() {
+            let tok = self.advance().unwrap();
+            let text = SmolStr::new(self.slice(tok.span));
+            Some(Name::new(text, tok.span))
+        } else {
+            let span = self.current_span();
+            self.error("parse.expected_identifier", "expected identifier", span);
+            None
         }
     }
 
@@ -500,13 +495,10 @@ impl<'src> Parser<'src> {
                 break;
             }
         }
-        let end = constraints
-            .last()
-            .map(|c| match c {
-                WhereConstraint::Is { span, .. } => *span,
-                WhereConstraint::IsNot { span, .. } => *span,
-            })
-            .unwrap_or(start);
+        let end = constraints.last().map_or(start, |c| match c {
+            WhereConstraint::Is { span, .. } => *span,
+            WhereConstraint::IsNot { span, .. } => *span,
+        });
         Some(WhereClause {
             constraints,
             span: start.cover(end),
@@ -584,20 +576,16 @@ impl<'src> Parser<'src> {
                     break;
                 }
                 continue;
-            } else {
-                break;
             }
+            break;
         }
         if grouped {
             self.expect(&TokenKind::RParen)?;
         }
-        let end = constraints
-            .last()
-            .map(|c| match c {
-                WhereConstraint::Is { span, .. } => *span,
-                WhereConstraint::IsNot { span, .. } => *span,
-            })
-            .unwrap_or(start);
+        let end = constraints.last().map_or(start, |c| match c {
+            WhereConstraint::Is { span, .. } => *span,
+            WhereConstraint::IsNot { span, .. } => *span,
+        });
         Some(WhereClause {
             constraints,
             span: start.cover(end),
@@ -625,39 +613,39 @@ fn expected_end_label(block_name: &str) -> &str {
     }
 }
 
-fn is_qualified_name_part(kind: Option<&TokenKind>) -> bool {
+const fn is_qualified_name_part(kind: Option<&TokenKind>) -> bool {
     matches!(
         kind,
-        Some(TokenKind::Ident)
-            // Allow `module` as a path segment (`pkg.module.name`) even though it is
-            // a keyword for the file header.
-            | Some(TokenKind::Module)
-            | Some(TokenKind::Any)
-            | Some(TokenKind::Optional)
-            | Some(TokenKind::ResultKw)
-            | Some(TokenKind::List)
-            | Some(TokenKind::Map)
-            | Some(TokenKind::Set)
-            | Some(TokenKind::Range)
-            | Some(TokenKind::Repeat)
-            | Some(TokenKind::Void)
-            | Some(TokenKind::Tuple)
-            | Some(TokenKind::Lazy)
-            | Some(TokenKind::Handle)
-            | Some(TokenKind::BoolTy)
-            | Some(TokenKind::IntTy)
-            | Some(TokenKind::Int8Ty)
-            | Some(TokenKind::Int16Ty)
-            | Some(TokenKind::Int32Ty)
-            | Some(TokenKind::Int64Ty)
-            | Some(TokenKind::U8Ty)
-            | Some(TokenKind::U16Ty)
-            | Some(TokenKind::U32Ty)
-            | Some(TokenKind::U64Ty)
-            | Some(TokenKind::FloatTy)
-            | Some(TokenKind::Float32Ty)
-            | Some(TokenKind::Float64Ty)
-            | Some(TokenKind::StringTy)
-            | Some(TokenKind::BytesTy)
+        Some(
+            TokenKind::Ident
+                | TokenKind::Module
+                | TokenKind::Any
+                | TokenKind::Optional
+                | TokenKind::ResultKw
+                | TokenKind::List
+                | TokenKind::Map
+                | TokenKind::Set
+                | TokenKind::Range
+                | TokenKind::Repeat
+                | TokenKind::Void
+                | TokenKind::Tuple
+                | TokenKind::Lazy
+                | TokenKind::Handle
+                | TokenKind::BoolTy
+                | TokenKind::IntTy
+                | TokenKind::Int8Ty
+                | TokenKind::Int16Ty
+                | TokenKind::Int32Ty
+                | TokenKind::Int64Ty
+                | TokenKind::U8Ty
+                | TokenKind::U16Ty
+                | TokenKind::U32Ty
+                | TokenKind::U64Ty
+                | TokenKind::FloatTy
+                | TokenKind::Float32Ty
+                | TokenKind::Float64Ty
+                | TokenKind::StringTy
+                | TokenKind::BytesTy
+        )
     )
 }

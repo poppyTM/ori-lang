@@ -14,7 +14,7 @@ pub fn generate_bindings(header_path: &Path, module_name: Option<&str>) -> Resul
     let mod_name = module_name.unwrap_or(stem);
 
     let mut out = String::new();
-    out.push_str(&format!("module {}\n\n", mod_name));
+    out.push_str(&format!("module {mod_name}\n\n"));
 
     let mut constants = Vec::new();
     let mut typedefs = Vec::new();

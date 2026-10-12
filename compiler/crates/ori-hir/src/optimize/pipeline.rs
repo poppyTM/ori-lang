@@ -22,8 +22,8 @@ impl OptLevel {
     /// Resolve from `ORI_OPT` env: `none` | `default` | `aggressive`.
     pub fn from_env() -> Self {
         match std::env::var("ORI_OPT").ok().as_deref() {
-            Some("none") | Some("0") => Self::None,
-            Some("aggressive") | Some("2") => Self::Aggressive,
+            Some("none" | "0") => Self::None,
+            Some("aggressive" | "2") => Self::Aggressive,
             _ => Self::Default,
         }
     }

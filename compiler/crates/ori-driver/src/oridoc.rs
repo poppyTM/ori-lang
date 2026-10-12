@@ -381,10 +381,10 @@ impl EntryBuilder {
 }
 
 fn trim_empty_lines(lines: &mut Vec<String>) {
-    while lines.first().is_some_and(|line| line.is_empty()) {
+    while lines.first().is_some_and(std::string::String::is_empty) {
         lines.remove(0);
     }
-    while lines.last().is_some_and(|line| line.is_empty()) {
+    while lines.last().is_some_and(std::string::String::is_empty) {
         lines.pop();
     }
 }

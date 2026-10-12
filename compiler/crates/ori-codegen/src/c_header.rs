@@ -513,7 +513,7 @@ fn c_declaration(c_type: &str, identifier: &str) -> String {
     format!("{c_type}{separator}{identifier}")
 }
 
-fn is_c_export_scalar_field_ty(ty: &Ty) -> bool {
+const fn is_c_export_scalar_field_ty(ty: &Ty) -> bool {
     matches!(
         ty,
         Ty::Bool

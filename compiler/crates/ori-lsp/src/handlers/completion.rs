@@ -42,7 +42,7 @@ fn is_compat_nested_module(module: &str) -> bool {
 }
 
 /// Keywords valid on an import line after the path (`= alias` S3).
-pub fn import_keyword_completion_items() -> Vec<CompletionItem> {
+pub const fn import_keyword_completion_items() -> Vec<CompletionItem> {
     // S3: `import ori.io = io` — only `=` is punctuation; no `as`/`only` clause keywords.
     // Keep empty for path position; alias names come from the user.
     Vec::new()

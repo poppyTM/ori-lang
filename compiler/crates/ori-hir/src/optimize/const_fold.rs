@@ -251,7 +251,7 @@ struct IntDomain {
 }
 
 impl IntDomain {
-    fn of(ty: &Ty) -> Option<Self> {
+    const fn of(ty: &Ty) -> Option<Self> {
         let (bits, signed) = match ty {
             Ty::Int | Ty::Int64 => (64, true),
             Ty::Int8 => (8, true),
@@ -266,13 +266,13 @@ impl IntDomain {
         Some(Self { bits, signed })
     }
 
-    fn mask(self) -> u128 {
+    const fn mask(self) -> u128 {
         (1u128 << self.bits) - 1
     }
 
     /// Widen the stored payload into the mathematical value it denotes.
     fn decode(self, raw: i64) -> i128 {
-        let truncated = (raw as u64 as u128) & self.mask();
+        let truncated = u128::from(raw as u64) & self.mask();
         if self.signed {
             let shift = 128 - self.bits;
             ((truncated as i128) << shift) >> shift
@@ -292,7 +292,7 @@ impl IntDomain {
         }
     }
 
-    fn min(self) -> i128 {
+    const fn min(self) -> i128 {
         if self.signed {
             -(1i128 << (self.bits - 1))
         } else {
@@ -302,7 +302,7 @@ impl IntDomain {
 }
 
 fn fold_int_bin(op: BinaryOp, a: i64, b: i64, ty: &Ty) -> Option<i64> {
-    use BinaryOp::*;
+    use BinaryOp::{Add, Div, Mul, Rem, Sub};
     let domain = IntDomain::of(ty)?;
     let lhs = domain.decode(a);
     let rhs = domain.decode(b);
@@ -327,8 +327,8 @@ fn fold_int_neg(operand: i64, ty: &Ty) -> Option<i64> {
     Some(domain.encode(domain.decode(operand).wrapping_neg()))
 }
 
-fn fold_bool_bin(op: BinaryOp, a: bool, b: bool) -> Option<bool> {
-    use BinaryOp::*;
+const fn fold_bool_bin(op: BinaryOp, a: bool, b: bool) -> Option<bool> {
+    use BinaryOp::{And, Eq, Ne, Or};
     Some(match op {
         And => a && b,
         Or => a || b,

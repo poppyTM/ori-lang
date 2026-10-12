@@ -10,7 +10,7 @@
 use std::collections::HashSet;
 
 use ori_ast::expr::BinaryOp;
-use ori_hir::hir::*;
+use ori_hir::hir::{HirBlock, HirExpr, HirExprKind, HirFunc, HirLValue, HirStmt, HirStrPart};
 use ori_types::Ty;
 use smol_str::SmolStr;
 
@@ -292,7 +292,7 @@ pub(super) fn collect_function_references(function: &HirFunc) -> FunctionReferen
     references
 }
 
-fn is_runtime_scalar_type(ty: &Ty) -> bool {
+const fn is_runtime_scalar_type(ty: &Ty) -> bool {
     matches!(
         ty,
         Ty::Bool

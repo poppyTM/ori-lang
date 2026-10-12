@@ -388,7 +388,7 @@ unsafe extern "C" fn ori_host_report_error(code: i32, message: *const u8) {
     let message = if message.is_null() {
         &[]
     } else {
-        CStr::from_ptr(message as *const c_char).to_bytes()
+        CStr::from_ptr(message.cast::<c_char>()).to_bytes()
     };
     set_host_error_bytes(code, message);
 }
@@ -436,7 +436,7 @@ fn lock_arc_state() -> MutexGuard<'static, ArcState> {
             ARC_LOCK_CONTENTION.fetch_add(1, Ordering::Relaxed);
             arc_state()
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
         }
         Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
     }
@@ -524,7 +524,7 @@ unsafe fn registered_payload_preview(ptr: *const u8, max_len: usize) -> Option<(
     Some((bytes, content_len))
 }
 
-fn allocation_total(size: usize) -> Option<usize> {
+const fn allocation_total(size: usize) -> Option<usize> {
     size.checked_add(std::mem::size_of::<OriHeapHeader>())
 }
 
@@ -558,12 +558,12 @@ unsafe fn ori_alloc_impl(
     let Some(total) = allocation_total(size) else {
         abort_bounds("ori allocation size overflow");
     };
-    let ptr = libc::malloc(total) as *mut u8;
+    let ptr = libc::malloc(total).cast::<u8>();
     if ptr.is_null() && total != 0 {
         abort_bounds("ori out of memory while allocating a managed object");
     }
-    let header = ptr as *mut OriHeapHeader;
-    std::ptr::write(&mut (*header).refcount, AtomicI64::new(1));
+    let header = ptr.cast::<OriHeapHeader>();
+    std::ptr::write(&raw mut (*header).refcount, AtomicI64::new(1));
     (*header).destructor = destructor;
     let payload = ptr.add(std::mem::size_of::<OriHeapHeader>());
     register_allocation(header, payload, size, type_tag);
@@ -723,14 +723,7 @@ unsafe extern "C" fn ori_arc_release(ptr: *mut u8) {
         };
         let header = allocation.header as *mut OriHeapHeader;
         let old = (*header).refcount.fetch_sub(1, Ordering::Release);
-        if old != 1 {
-            if state.edges.by_owner.contains_key(&payload) {
-                // Bacon possible root: a refcount decremented to non-zero on an
-                // object with outgoing edges may have disconnected a cycle.
-                state.mark_suspect(payload);
-            }
-            None
-        } else {
+        if old == 1 {
             let children: Vec<*mut u8> = state
                 .edges
                 .take_children_of(payload)
@@ -740,6 +733,13 @@ unsafe extern "C" fn ori_arc_release(ptr: *mut u8) {
             state.edges.remove_edges_to(payload);
             state.remove_allocation(payload);
             Some((header, children))
+        } else {
+            if state.edges.by_owner.contains_key(&payload) {
+                // Bacon possible root: a refcount decremented to non-zero on an
+                // object with outgoing edges may have disconnected a cycle.
+                state.mark_suspect(payload);
+            }
+            None
         }
     };
 
@@ -748,8 +748,8 @@ unsafe extern "C" fn ori_arc_release(ptr: *mut u8) {
         if let Some(dtor) = (*header).destructor {
             dtor(ptr);
         }
-        std::ptr::drop_in_place(&mut (*header).refcount);
-        libc::free(header as *mut libc::c_void);
+        std::ptr::drop_in_place(&raw mut (*header).refcount);
+        libc::free(header.cast::<libc::c_void>());
         for child in children {
             ori_arc_release(child);
         }
@@ -1121,8 +1121,7 @@ fn io_pool() -> &'static IoPool {
 
 fn io_pool_worker_count() -> usize {
     std::thread::available_parallelism()
-        .map(usize::from)
-        .unwrap_or(1)
+        .map_or(1, usize::from)
         .clamp(1, IO_POOL_MAX_WORKERS)
 }
 
@@ -1429,11 +1428,11 @@ unsafe fn schedule_sleep_timer(future: *mut OriFuture, ms: i64) -> Result<(), St
 }
 
 unsafe extern "C" fn ori_task_job_dtor(ptr: *mut u8) {
-    std::ptr::drop_in_place(ptr as *mut OriTaskJob);
+    std::ptr::drop_in_place(ptr.cast::<OriTaskJob>());
 }
 
 unsafe extern "C" fn ori_channel_dtor(ptr: *mut u8) {
-    let channel = ptr as *mut OriChannel;
+    let channel = ptr.cast::<OriChannel>();
     let queued = match (*channel).state.lock() {
         Ok(mut state) => state.queue.drain(..).collect::<Vec<_>>(),
         Err(poisoned) => poisoned.into_inner().queue.drain(..).collect::<Vec<_>>(),
@@ -1447,11 +1446,11 @@ unsafe extern "C" fn ori_channel_dtor(ptr: *mut u8) {
 }
 
 unsafe extern "C" fn ori_atomic_int_dtor(ptr: *mut u8) {
-    std::ptr::drop_in_place(ptr as *mut OriAtomicInt);
+    std::ptr::drop_in_place(ptr.cast::<OriAtomicInt>());
 }
 
 unsafe extern "C" fn ori_future_dtor(ptr: *mut u8) {
-    let future = ptr as *mut OriFuture;
+    let future = ptr.cast::<OriFuture>();
     let (waiters, managed_value, token) = match (*future).state.lock() {
         Ok(mut guard) => {
             let managed_value = if guard.status == OriFutureStatus::Ready && guard.value_is_managed
@@ -1494,7 +1493,7 @@ unsafe extern "C" fn ori_future_dtor(ptr: *mut u8) {
 }
 
 unsafe extern "C" fn ori_async_spawn_job_dtor(ptr: *mut u8) {
-    let job = ptr as *mut OriAsyncSpawnJob;
+    let job = ptr.cast::<OriAsyncSpawnJob>();
     let closure = (*job).closure;
     let future = (*job).future;
     (*job).closure = 0;
@@ -1510,7 +1509,7 @@ unsafe extern "C" fn ori_async_spawn_job_dtor(ptr: *mut u8) {
 
 unsafe fn alloc_task_job(job: OriTaskJob) -> *mut OriTaskJob {
     let ptr =
-        ori_alloc(std::mem::size_of::<OriTaskJob>(), Some(ori_task_job_dtor)) as *mut OriTaskJob;
+        ori_alloc(std::mem::size_of::<OriTaskJob>(), Some(ori_task_job_dtor)).cast::<OriTaskJob>();
     if !ptr.is_null() {
         std::ptr::write(ptr, job);
     }
@@ -1519,7 +1518,7 @@ unsafe fn alloc_task_job(job: OriTaskJob) -> *mut OriTaskJob {
 
 unsafe fn alloc_channel(channel: OriChannel) -> *mut OriChannel {
     let ptr =
-        ori_alloc(std::mem::size_of::<OriChannel>(), Some(ori_channel_dtor)) as *mut OriChannel;
+        ori_alloc(std::mem::size_of::<OriChannel>(), Some(ori_channel_dtor)).cast::<OriChannel>();
     if !ptr.is_null() {
         std::ptr::write(ptr, channel);
     }
@@ -1530,7 +1529,8 @@ unsafe fn alloc_atomic_int(value: i64) -> *mut OriAtomicInt {
     let ptr = ori_alloc(
         std::mem::size_of::<OriAtomicInt>(),
         Some(ori_atomic_int_dtor),
-    ) as *mut OriAtomicInt;
+    )
+    .cast::<OriAtomicInt>();
     if !ptr.is_null() {
         std::ptr::write(
             ptr,
@@ -1543,7 +1543,8 @@ unsafe fn alloc_atomic_int(value: i64) -> *mut OriAtomicInt {
 }
 
 unsafe fn alloc_future(future: OriFuture) -> *mut OriFuture {
-    let ptr = ori_alloc(std::mem::size_of::<OriFuture>(), Some(ori_future_dtor)) as *mut OriFuture;
+    let ptr =
+        ori_alloc(std::mem::size_of::<OriFuture>(), Some(ori_future_dtor)).cast::<OriFuture>();
     if !ptr.is_null() {
         std::ptr::write(ptr, future);
     }
@@ -1594,7 +1595,7 @@ unsafe fn retain_registered_future_payload(value: *mut u8) -> bool {
     retain_registered_payload(value)
 }
 
-fn future_status_code(status: OriFutureStatus) -> i64 {
+const fn future_status_code(status: OriFutureStatus) -> i64 {
     match status {
         OriFutureStatus::Pending => 0,
         OriFutureStatus::Ready => 1,
@@ -1667,7 +1668,7 @@ unsafe fn schedule_future_waiters(waiters: Vec<usize>) {
 unsafe fn complete_future_owned(future: *mut OriFuture, status: OriFutureStatus, value: i64) {
     let waiters = set_future_status(future, status, value, false);
     schedule_future_waiters(waiters);
-    ori_arc_release(future as *mut u8);
+    ori_arc_release(future.cast::<u8>());
 }
 
 unsafe fn complete_future_owned_ptr(
@@ -1679,14 +1680,14 @@ unsafe fn complete_future_owned_ptr(
         status == OriFutureStatus::Ready && header_for_registered(value).is_some();
     let waiters = set_future_status(future, status, value as i64, value_is_managed);
     schedule_future_waiters(waiters);
-    ori_arc_release(future as *mut u8);
+    ori_arc_release(future.cast::<u8>());
 }
 
 unsafe extern "C" fn async_spawn_job_entry(env: *mut u8) -> i64 {
     if env.is_null() {
         return 0;
     }
-    let job = env as *mut OriAsyncSpawnJob;
+    let job = env.cast::<OriAsyncSpawnJob>();
     let runner = (*job).runner;
     let closure = (*job).closure;
     let future = (*job).future;
@@ -1722,8 +1723,8 @@ unsafe fn alloc_executor_closure(
     if closure.is_null() {
         return closure;
     }
-    *(closure as *mut usize) = entry as *const () as usize;
-    *(closure.add(ptr_size) as *mut usize) = env as usize;
+    *closure.cast::<usize>() = entry as *const () as usize;
+    *closure.add(ptr_size).cast::<usize>() = env as usize;
     if !env.is_null() {
         ori_arc_register_edge(closure, env);
         ori_arc_release(env);
@@ -1739,7 +1740,8 @@ unsafe fn alloc_async_spawn_job(
     let job = ori_alloc(
         std::mem::size_of::<OriAsyncSpawnJob>(),
         Some(ori_async_spawn_job_dtor),
-    ) as *mut OriAsyncSpawnJob;
+    )
+    .cast::<OriAsyncSpawnJob>();
     if !job.is_null() {
         std::ptr::write(
             job,
@@ -1757,7 +1759,7 @@ static RESULT_OK_ZERO: [u8; 16] = [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
 
 unsafe fn new_result_raw(is_ok: bool, raw: i64) -> *mut u8 {
     if is_ok && raw == 0 {
-        return RESULT_OK_ZERO.as_ptr() as *mut u8;
+        return RESULT_OK_ZERO.as_ptr().cast_mut();
     }
     let ptr_size = std::mem::size_of::<*mut u8>();
     let total = ptr_size * 2;
@@ -1767,7 +1769,7 @@ unsafe fn new_result_raw(is_ok: bool, raw: i64) -> *mut u8 {
     }
     std::ptr::write_bytes(ptr, 0, total);
     *ptr = u8::from(is_ok);
-    std::ptr::write_unaligned(ptr.add(ptr_size) as *mut i64, raw);
+    std::ptr::write_unaligned(ptr.add(ptr_size).cast::<i64>(), raw);
     ptr
 }
 
@@ -1818,16 +1820,15 @@ unsafe extern "C" fn ori_task_spawn(closure: *mut u8) -> *mut OriTaskJob {
         }
     });
 
-    let handle = match handle {
-        Ok(handle) => handle,
-        Err(_) => {
-            // The task closure owns the only reference transferred by the
-            // caller. Drop it when no worker can take responsibility for it.
-            ori_arc_release(closure);
-            return alloc_task_job(OriTaskJob {
-                handle: Mutex::new(None),
-            });
-        }
+    let handle = if let Ok(handle) = handle {
+        handle
+    } else {
+        // The task closure owns the only reference transferred by the
+        // caller. Drop it when no worker can take responsibility for it.
+        ori_arc_release(closure);
+        return alloc_task_job(OriTaskJob {
+            handle: Mutex::new(None),
+        });
     };
 
     alloc_task_job(OriTaskJob {
@@ -1875,7 +1876,7 @@ unsafe extern "C" fn ori_task_sleep(ms: i64) -> *mut OriFuture {
         return future;
     }
 
-    ori_arc_retain(future as *mut u8);
+    ori_arc_retain(future.cast::<u8>());
     if schedule_sleep_timer(future, ms).is_err() {
         // The extra reference belongs to the timer worker. If the worker
         // cannot be created, complete the future here so awaiters never stay
@@ -2007,17 +2008,17 @@ unsafe fn async_spawn_with_runner(
         return future;
     }
 
-    ori_arc_retain(future as *mut u8);
+    ori_arc_retain(future.cast::<u8>());
     let job = alloc_async_spawn_job(runner, closure, future);
     if job.is_null() {
         ori_arc_release(closure);
         complete_future_owned(future, OriFutureStatus::Failed, 0);
         return future;
     }
-    let executor_closure = alloc_executor_closure(async_spawn_job_entry, job as *mut u8);
+    let executor_closure = alloc_executor_closure(async_spawn_job_entry, job.cast::<u8>());
     if executor_closure.is_null() {
         ori_future_fail(future);
-        ori_arc_release(job as *mut u8);
+        ori_arc_release(job.cast::<u8>());
         return future;
     }
     schedule_executor_task_owned(executor_closure as usize);
@@ -2214,14 +2215,14 @@ unsafe fn deregister_future_from_token(future: *mut OriFuture, cancel_token: *mu
     if cancel_token.is_null() {
         return;
     }
-    let token = cancel_token as *mut RuntimeCancelToken;
+    let token = cancel_token.cast::<RuntimeCancelToken>();
     let mut t_guard = match (*token).associated_futures.lock() {
         Ok(g) => g,
         Err(p) => p.into_inner(),
     };
     if let Some(pos) = t_guard.iter().position(|&x| x == future) {
         t_guard.remove(pos);
-        ori_arc_release(future as *mut u8);
+        ori_arc_release(future.cast::<u8>());
         compact_cancel_token_associations(&mut t_guard);
     }
     drop(t_guard);
@@ -2233,7 +2234,8 @@ unsafe extern "C" fn ori_task_create_token() -> *mut u8 {
     let token = ori_alloc(
         std::mem::size_of::<RuntimeCancelToken>(),
         Some(ori_task_cancel_token_dtor),
-    ) as *mut RuntimeCancelToken;
+    )
+    .cast::<RuntimeCancelToken>();
     if !token.is_null() {
         std::ptr::write(
             token,
@@ -2243,11 +2245,11 @@ unsafe extern "C" fn ori_task_create_token() -> *mut u8 {
             },
         );
     }
-    token as *mut u8
+    token.cast::<u8>()
 }
 
 unsafe extern "C" fn ori_task_cancel_token_dtor(ptr: *mut u8) {
-    let token = ptr as *mut RuntimeCancelToken;
+    let token = ptr.cast::<RuntimeCancelToken>();
     std::ptr::drop_in_place(token);
 }
 
@@ -2256,7 +2258,7 @@ unsafe extern "C" fn ori_task_cancel(token_ptr: *mut u8) {
     if token_ptr.is_null() {
         return;
     }
-    let token = token_ptr as *mut RuntimeCancelToken;
+    let token = token_ptr.cast::<RuntimeCancelToken>();
     (*token).cancelled.store(true, Ordering::SeqCst);
     let futures = {
         let mut guard = match (*token).associated_futures.lock() {
@@ -2270,7 +2272,7 @@ unsafe extern "C" fn ori_task_cancel(token_ptr: *mut u8) {
         // `associated_futures` owns one ARC reference per entry. Cancellation
         // takes the vector in one operation, so it must release that future
         // reference explicitly after transitioning the future.
-        ori_arc_release(future as *mut u8);
+        ori_arc_release(future.cast::<u8>());
     }
 }
 
@@ -2279,12 +2281,8 @@ unsafe extern "C" fn ori_task_is_cancelled(token_ptr: *mut u8) -> i8 {
     if token_ptr.is_null() {
         return 0;
     }
-    let token = token_ptr as *mut RuntimeCancelToken;
-    if (*token).cancelled.load(Ordering::SeqCst) {
-        1
-    } else {
-        0
-    }
+    let token = token_ptr.cast::<RuntimeCancelToken>();
+    i8::from((*token).cancelled.load(Ordering::SeqCst))
 }
 
 #[no_mangle]
@@ -2292,8 +2290,8 @@ unsafe extern "C" fn ori_task_associate(token_ptr: *mut u8, future_ptr: *mut u8)
     if token_ptr.is_null() || future_ptr.is_null() {
         return;
     }
-    let token = token_ptr as *mut RuntimeCancelToken;
-    let future = future_ptr as *mut OriFuture;
+    let token = token_ptr.cast::<RuntimeCancelToken>();
+    let future = future_ptr.cast::<OriFuture>();
     let mut f_guard = match (*future).state.lock() {
         Ok(g) => g,
         Err(p) => p.into_inner(),
@@ -2319,7 +2317,7 @@ unsafe extern "C" fn ori_task_associate(token_ptr: *mut u8, future_ptr: *mut u8)
         return;
     }
     t_guard.push(future);
-    ori_arc_retain(future as *mut u8);
+    ori_arc_retain(future.cast::<u8>());
 }
 
 #[no_mangle]
@@ -2443,7 +2441,7 @@ unsafe extern "C" fn ori_channel_create_bounded(capacity: i64) -> *mut u8 {
         }),
         available: Condvar::new(),
     });
-    new_optional_ptr(true, channel as *mut u8)
+    new_optional_ptr(true, channel.cast::<u8>())
 }
 
 #[no_mangle]
@@ -2484,7 +2482,7 @@ unsafe fn channel_send_with_ownership(
     // route, and each successful registration keeps one temporary alive after
     // the call. Reject an invalid managed payload instead of silently turning
     // it into a scalar slot with incompatible receive semantics.
-    if managed && !try_register_arc_edge(channel as *mut u8, value as *mut u8) {
+    if managed && !try_register_arc_edge(channel.cast::<u8>(), value as *mut u8) {
         return new_result_raw(false, 0);
     }
     guard.queue.push_back(OriChannelItem { value, managed });
@@ -2524,7 +2522,7 @@ unsafe extern "C" fn ori_channel_receive(channel: *mut OriChannel) -> *mut u8 {
         new_result_raw(true, item.value)
     };
     if item.managed {
-        ori_arc_unregister_edge(channel as *mut u8, item.value as *mut u8);
+        ori_arc_unregister_edge(channel.cast::<u8>(), item.value as *mut u8);
     }
     result
 }
@@ -2746,8 +2744,8 @@ unsafe fn collect_cycles_over_candidates(
     }
     for (_, header) in collected_pairs {
         let header = header as *mut OriHeapHeader;
-        std::ptr::drop_in_place(&mut (*header).refcount);
-        libc::free(header as *mut libc::c_void);
+        std::ptr::drop_in_place(&raw mut (*header).refcount);
+        libc::free(header.cast::<libc::c_void>());
     }
 
     for child in children_to_release {
@@ -2801,8 +2799,7 @@ unsafe fn collect_cycles_from_suspects() -> (i64, usize) {
 pub extern "C" fn ori_arc_live_allocations() -> i64 {
     arc_state()
         .lock()
-        .map(|state| state.allocations.len() as i64)
-        .unwrap_or(0)
+        .map_or(0, |state| state.allocations.len() as i64)
 }
 
 // ── ori.io ────────────────────────────────────────────────────────────────────
@@ -2873,13 +2870,13 @@ struct RuntimeIoStream {
 
 unsafe extern "C" fn ori_io_stream_destructor(ptr: *mut u8) {
     if !ptr.is_null() {
-        std::ptr::drop_in_place(ptr as *mut RuntimeIoStream);
+        std::ptr::drop_in_place(ptr.cast::<RuntimeIoStream>());
     }
 }
 
 unsafe fn alloc_stream(kind: RuntimeStreamKind) -> *mut u8 {
     let layout_size = std::mem::size_of::<RuntimeIoStream>();
-    let payload = ori_alloc(layout_size, Some(ori_io_stream_destructor)) as *mut RuntimeIoStream;
+    let payload = ori_alloc(layout_size, Some(ori_io_stream_destructor)).cast::<RuntimeIoStream>();
     if payload.is_null() {
         return std::ptr::null_mut();
     }
@@ -2891,12 +2888,12 @@ unsafe fn alloc_stream(kind: RuntimeStreamKind) -> *mut u8 {
             file: None,
         },
     );
-    payload as *mut u8
+    payload.cast::<u8>()
 }
 
 unsafe fn alloc_file_stream(kind: RuntimeStreamKind, file: std::fs::File) -> *mut u8 {
     let layout_size = std::mem::size_of::<RuntimeIoStream>();
-    let payload = ori_alloc(layout_size, Some(ori_io_stream_destructor)) as *mut RuntimeIoStream;
+    let payload = ori_alloc(layout_size, Some(ori_io_stream_destructor)).cast::<RuntimeIoStream>();
     if payload.is_null() {
         return std::ptr::null_mut();
     }
@@ -2908,7 +2905,7 @@ unsafe fn alloc_file_stream(kind: RuntimeStreamKind, file: std::fs::File) -> *mu
             file: Some(file),
         },
     );
-    payload as *mut u8
+    payload.cast::<u8>()
 }
 
 #[no_mangle]
@@ -2958,7 +2955,7 @@ unsafe extern "C" fn ori_io_read(stream_ptr: *mut u8, max_bytes: i64) -> *mut u8
     if max_bytes < 0 {
         return new_result(false, cstring_from_str("Invalid byte count"));
     }
-    let stream = &mut *(stream_ptr as *mut RuntimeIoStream);
+    let stream = &mut *stream_ptr.cast::<RuntimeIoStream>();
     if stream.closed {
         return new_result(false, cstring_from_str("Input stream is closed"));
     }
@@ -2999,7 +2996,7 @@ unsafe extern "C" fn ori_io_write(stream_ptr: *mut u8, data: *const u8) -> *mut 
     if stream_ptr.is_null() {
         return new_result(false, cstring_from_str("Invalid output stream"));
     }
-    let stream = &mut *(stream_ptr as *mut RuntimeIoStream);
+    let stream = &mut *stream_ptr.cast::<RuntimeIoStream>();
     if stream.closed {
         return new_result(false, cstring_from_str("Output stream is closed"));
     }
@@ -3029,7 +3026,7 @@ unsafe extern "C" fn ori_io_flush(stream_ptr: *mut u8) -> *mut u8 {
     if stream_ptr.is_null() {
         return new_result(false, cstring_from_str("Invalid output stream"));
     }
-    let stream = &mut *(stream_ptr as *mut RuntimeIoStream);
+    let stream = &mut *stream_ptr.cast::<RuntimeIoStream>();
     if stream.closed {
         return new_result(false, cstring_from_str("Output stream is closed"));
     }
@@ -3058,7 +3055,7 @@ unsafe extern "C" fn ori_io_close_input(stream_ptr: *mut u8) {
     if stream_ptr.is_null() {
         return;
     }
-    let stream = &mut *(stream_ptr as *mut RuntimeIoStream);
+    let stream = &mut *stream_ptr.cast::<RuntimeIoStream>();
     stream.closed = true;
     if matches!(stream.kind, RuntimeStreamKind::FileRead) {
         stream.file = None;
@@ -3070,7 +3067,7 @@ unsafe extern "C" fn ori_io_close_output(stream_ptr: *mut u8) {
     if stream_ptr.is_null() {
         return;
     }
-    let stream = &mut *(stream_ptr as *mut RuntimeIoStream);
+    let stream = &mut *stream_ptr.cast::<RuntimeIoStream>();
     stream.closed = true;
     if matches!(stream.kind, RuntimeStreamKind::FileWrite) {
         stream.file = None;
@@ -3085,7 +3082,7 @@ unsafe extern "C" fn ori_io_close_output(stream_ptr: *mut u8) {
 unsafe extern "C" fn ori_int_to_cstr(n: i64) -> *mut u8 {
     let mut ptr = std::ptr::null_mut();
     let mut len = 0;
-    ori_to_string_parts(n, &mut ptr, &mut len);
+    ori_to_string_parts(n, &raw mut ptr, &raw mut len);
     ptr
 }
 
@@ -3100,7 +3097,7 @@ unsafe extern "C" fn ori_to_string(n: i64) -> *mut u8 {
 unsafe extern "C" fn ori_uint_to_cstr(n: i64) -> *mut u8 {
     let mut ptr = std::ptr::null_mut();
     let mut len = 0;
-    ori_uint_to_string_parts(n, &mut ptr, &mut len);
+    ori_uint_to_string_parts(n, &raw mut ptr, &raw mut len);
     ptr
 }
 
@@ -3110,7 +3107,7 @@ unsafe extern "C" fn ori_uint_to_string(n: i64) -> *mut u8 {
 }
 
 #[no_mangle]
-pub extern "C" fn ori_to_int(value: i64) -> i64 {
+pub const extern "C" fn ori_to_int(value: i64) -> i64 {
     value
 }
 
@@ -3170,11 +3167,11 @@ unsafe extern "C" fn ori_len(ptr: *const u8) -> i64 {
     cstr_str(ptr).chars().count() as i64
 }
 
-unsafe fn cstr_byte_len(ptr: *const u8) -> usize {
+const unsafe fn cstr_byte_len(ptr: *const u8) -> usize {
     if ptr.is_null() {
         return 0;
     }
-    CStr::from_ptr(ptr as *const c_char).to_bytes().len()
+    CStr::from_ptr(ptr.cast::<c_char>()).to_bytes().len()
 }
 
 #[no_mangle]
@@ -3203,15 +3200,14 @@ unsafe extern "C" fn ori_string_copy_host(value: *const u8) -> *mut u8 {
     if value.is_null() {
         return cstring_from_str("");
     }
-    match CStr::from_ptr(value as *const c_char).to_str() {
-        Ok(value) => cstring_from_str(value),
-        Err(_) => {
-            set_host_error_bytes(
-                ORI_HOST_ERROR_INVALID_UTF8,
-                b"invalid UTF-8 string passed across the Ori host ABI",
-            );
-            cstring_from_str("")
-        }
+    if let Ok(value) = CStr::from_ptr(value.cast::<c_char>()).to_str() {
+        cstring_from_str(value)
+    } else {
+        set_host_error_bytes(
+            ORI_HOST_ERROR_INVALID_UTF8,
+            b"invalid UTF-8 string passed across the Ori host ABI",
+        );
+        cstring_from_str("")
     }
 }
 
@@ -3317,8 +3313,7 @@ unsafe extern "C" fn ori_string_index_of(s: *const u8, sub: *const u8) -> i64 {
     let s = cstr_str(s);
     let sub = cstr_str(sub);
     s.find(sub)
-        .map(|index| s[..index].chars().count() as i64)
-        .unwrap_or(-1)
+        .map_or(-1, |index| s[..index].chars().count() as i64)
 }
 
 #[no_mangle]
@@ -3396,7 +3391,7 @@ unsafe fn cstr_str_result<'a>(ptr: *const u8) -> Result<&'a str, ()> {
     if ptr.is_null() {
         return Ok("");
     }
-    CStr::from_ptr(ptr as *const c_char).to_str().map_err(|_| {
+    CStr::from_ptr(ptr.cast::<c_char>()).to_str().map_err(|_| {
         set_host_error_bytes(
             ORI_HOST_ERROR_INVALID_UTF8,
             b"invalid UTF-8 string passed across the Ori host ABI",
@@ -3421,7 +3416,8 @@ fn cstring_from_str(s: &str) -> *mut u8 {
 fn cstring_from_process_arg(s: &str) -> *mut u8 {
     CString::new(s)
         .unwrap_or_else(|_| CString::new("").expect("empty C string has no NUL"))
-        .into_raw() as *mut u8
+        .into_raw()
+        .cast::<u8>()
 }
 
 /// Allocates one managed string holding `parts` end to end, NUL-terminated.
@@ -3493,8 +3489,7 @@ fn char_index_to_byte_index(s: &str, index: usize) -> usize {
     }
     s.char_indices()
         .nth(index)
-        .map(|(byte_index, _)| byte_index)
-        .unwrap_or(s.len())
+        .map_or(s.len(), |(byte_index, _)| byte_index)
 }
 
 unsafe fn ori_list_push_owned_managed(list: *mut OriList, value: *mut u8) {
@@ -3511,11 +3506,11 @@ unsafe fn ori_list_push_borrowed_maybe_managed(list: *mut OriList, value: i64) {
         return;
     }
     ori_list_push(list, value);
-    ori_arc_register_edge(list as *mut u8, value as *mut u8);
+    ori_arc_register_edge(list.cast::<u8>(), value as *mut u8);
 }
 
 unsafe fn ori_set_register_borrowed_maybe_managed(set: *mut OriSet, value: i64) {
-    ori_arc_register_edge(set as *mut u8, value as *mut u8);
+    ori_arc_register_edge(set.cast::<u8>(), value as *mut u8);
 }
 
 unsafe fn unregister_collection_edge(owner: *mut u8, value: i64) {
@@ -3573,9 +3568,9 @@ pub struct OriList {
 }
 
 unsafe extern "C" fn ori_list_dtor(ptr: *mut u8) {
-    let list = ptr as *mut OriList;
+    let list = ptr.cast::<OriList>();
     if !(*list).data.is_null() {
-        libc::free((*list).data as *mut libc::c_void);
+        libc::free((*list).data.cast::<libc::c_void>());
     }
 }
 
@@ -3664,7 +3659,7 @@ unsafe fn list_ensure_capacity(list: *mut OriList, min_cap: i64) {
     }
     let next_cap = grown_capacity((*list).cap, min_cap, std::mem::size_of::<i64>());
     let bytes = capacity_bytes(next_cap, std::mem::size_of::<i64>());
-    (*list).data = checked_realloc((*list).data as *mut libc::c_void, bytes) as *mut i64;
+    (*list).data = checked_realloc((*list).data.cast::<libc::c_void>(), bytes).cast::<i64>();
     (*list).cap = next_cap;
 }
 
@@ -3672,8 +3667,8 @@ unsafe fn list_ensure_capacity(list: *mut OriList, min_cap: i64) {
 unsafe extern "C" fn ori_list_new() -> *mut OriList {
     let cap = 8_i64;
     let bytes = capacity_bytes(cap, std::mem::size_of::<i64>());
-    let data = checked_malloc(bytes) as *mut i64;
-    let list = ori_alloc(std::mem::size_of::<OriList>(), Some(ori_list_dtor)) as *mut OriList;
+    let data = checked_malloc(bytes).cast::<i64>();
+    let list = ori_alloc(std::mem::size_of::<OriList>(), Some(ori_list_dtor)).cast::<OriList>();
     if !list.is_null() {
         (*list).data = data;
         (*list).len = 0;
@@ -3758,7 +3753,7 @@ unsafe extern "C" fn ori_slice_new(list: *mut OriList, start: i64, end: i64) -> 
     if ptr.is_null() {
         return ptr;
     }
-    let slice = ptr as *mut OriSlice;
+    let slice = ptr.cast::<OriSlice>();
     (*slice).owner = list;
     (*slice).start = start;
     (*slice).len = end - start;
@@ -3766,7 +3761,7 @@ unsafe extern "C" fn ori_slice_new(list: *mut OriList, start: i64, end: i64) -> 
     // reference could drop while the window is still readable, and every read
     // would touch freed memory. The edge retains the owner and is released
     // when the slice itself is collected.
-    ori_arc_register_edge(ptr, list as *mut u8);
+    ori_arc_register_edge(ptr, list.cast::<u8>());
     ptr
 }
 
@@ -3775,7 +3770,7 @@ unsafe extern "C" fn ori_slice_len(slice: *mut u8) -> i64 {
     if slice.is_null() {
         return 0;
     }
-    (*(slice as *mut OriSlice)).len
+    (*slice.cast::<OriSlice>()).len
 }
 
 /// Read one element, resolving the owner's buffer on every access.
@@ -3787,7 +3782,7 @@ unsafe extern "C" fn ori_slice_get(slice: *mut u8, index: i64) -> i64 {
     if slice.is_null() {
         abort_bounds("ori slice index out of bounds");
     }
-    let slice = slice as *mut OriSlice;
+    let slice = slice.cast::<OriSlice>();
     if index < 0 || index >= (*slice).len {
         abort_bounds("ori slice index out of bounds");
     }
@@ -3805,7 +3800,7 @@ unsafe extern "C" fn ori_slice_owner(slice: *mut u8) -> *mut u8 {
     if slice.is_null() {
         return std::ptr::null_mut();
     }
-    (*(slice as *mut OriSlice)).owner as *mut u8
+    (*slice.cast::<OriSlice>()).owner.cast::<u8>()
 }
 
 /// A contiguous, mutably-indexable, fixed-length heap block.
@@ -3821,9 +3816,9 @@ pub struct OriBuffer {
 }
 
 unsafe extern "C" fn ori_buffer_dtor(ptr: *mut u8) {
-    let buf = ptr as *mut OriBuffer;
+    let buf = ptr.cast::<OriBuffer>();
     if !(*buf).data.is_null() {
-        libc::free((*buf).data as *mut libc::c_void);
+        libc::free((*buf).data.cast::<libc::c_void>());
     }
 }
 
@@ -3834,17 +3829,18 @@ unsafe extern "C" fn ori_buffer_new(len: i64) -> *mut OriBuffer {
     }
     let bytes = capacity_bytes(len, std::mem::size_of::<i64>());
     let data = if bytes > 0 {
-        let p = checked_malloc(bytes) as *mut i64;
+        let p = checked_malloc(bytes).cast::<i64>();
         // Zero-init so reads before writes see a deterministic value.
         std::ptr::write_bytes(p, 0, len as usize);
         p
     } else {
         std::ptr::null_mut()
     };
-    let buf = ori_alloc(std::mem::size_of::<OriBuffer>(), Some(ori_buffer_dtor)) as *mut OriBuffer;
+    let buf =
+        ori_alloc(std::mem::size_of::<OriBuffer>(), Some(ori_buffer_dtor)).cast::<OriBuffer>();
     if buf.is_null() {
         if !data.is_null() {
-            libc::free(data as *mut libc::c_void);
+            libc::free(data.cast::<libc::c_void>());
         }
         abort_bounds("ori out of memory while allocating a buffer");
     }
@@ -3909,11 +3905,11 @@ unsafe extern "C" fn ori_buffer_as_slice(buf: *mut OriBuffer) -> *mut u8 {
     if ptr.is_null() {
         abort_bounds("ori out of memory while slicing a buffer");
     }
-    let slice = ptr as *mut OriSlice;
-    (*slice).owner = buf as *mut OriList;
+    let slice = ptr.cast::<OriSlice>();
+    (*slice).owner = buf.cast::<OriList>();
     (*slice).start = 0;
     (*slice).len = (*buf).len;
-    ori_arc_register_edge(ptr, buf as *mut u8);
+    ori_arc_register_edge(ptr, buf.cast::<u8>());
     ptr
 }
 
@@ -3931,7 +3927,7 @@ unsafe extern "C" fn ori_span_new(buf: *mut OriBuffer, start: i64, len: i64) -> 
     if start < 0 || len < 0 || start + len > buf_len {
         abort_bounds("ori span bounds out of range");
     }
-    let ptr = ori_alloc(std::mem::size_of::<OriSpan>(), None) as *mut OriSpan;
+    let ptr = ori_alloc(std::mem::size_of::<OriSpan>(), None).cast::<OriSpan>();
     if ptr.is_null() {
         abort_bounds("ori out of memory while creating span");
     }
@@ -3939,7 +3935,7 @@ unsafe extern "C" fn ori_span_new(buf: *mut OriBuffer, start: i64, len: i64) -> 
     (*ptr).start = start;
     (*ptr).len = len;
     if !buf.is_null() {
-        ori_arc_register_edge(ptr as *mut u8, buf as *mut u8);
+        ori_arc_register_edge(ptr.cast::<u8>(), buf.cast::<u8>());
     }
     ptr
 }
@@ -4034,37 +4030,37 @@ pub struct OriRegion {
 }
 
 unsafe extern "C" fn ori_region_dtor(ptr: *mut u8) {
-    let region = ptr as *mut OriRegion;
+    let region = ptr.cast::<OriRegion>();
     if region.is_null() {
         return;
     }
     for chunk in &(*region).chunks {
         if !chunk.ptr.is_null() {
-            libc::free(chunk.ptr as *mut libc::c_void);
+            libc::free(chunk.ptr.cast::<libc::c_void>());
         }
     }
     std::ptr::drop_in_place(region);
 }
 
 unsafe extern "C" fn ori_region_dtor_wrapper(ptr: *mut u8) {
-    let inner_ptr = *(ptr as *mut *mut OriRegion);
+    let inner_ptr = *ptr.cast::<*mut OriRegion>();
     if !inner_ptr.is_null() {
-        ori_region_dtor(inner_ptr as *mut u8);
-        libc::free(inner_ptr as *mut libc::c_void);
+        ori_region_dtor(inner_ptr.cast::<u8>());
+        libc::free(inner_ptr.cast::<libc::c_void>());
     }
 }
 
 #[no_mangle]
 unsafe extern "C" fn ori_region_new() -> *mut OriRegion {
     let initial_cap = REGION_DEFAULT_CHUNK_SIZE;
-    let initial_ptr = checked_malloc(initial_cap) as *mut u8;
+    let initial_ptr = checked_malloc(initial_cap).cast::<u8>();
     let initial_chunk = RegionChunk {
         ptr: initial_ptr,
         cap: initial_cap,
     };
-    let region_raw = checked_malloc(std::mem::size_of::<OriRegion>()) as *mut OriRegion;
+    let region_raw = checked_malloc(std::mem::size_of::<OriRegion>()).cast::<OriRegion>();
     if region_raw.is_null() {
-        libc::free(initial_ptr as *mut libc::c_void);
+        libc::free(initial_ptr.cast::<libc::c_void>());
         abort_bounds("out of memory while allocating Region arena");
     }
     std::ptr::write(
@@ -4081,8 +4077,8 @@ unsafe extern "C" fn ori_region_new() -> *mut OriRegion {
         std::mem::size_of::<*mut OriRegion>(),
         Some(ori_region_dtor_wrapper),
     );
-    *(managed as *mut *mut OriRegion) = region_raw;
-    managed as *mut OriRegion
+    *managed.cast::<*mut OriRegion>() = region_raw;
+    managed.cast::<OriRegion>()
 }
 
 #[no_mangle]
@@ -4090,7 +4086,7 @@ unsafe extern "C" fn ori_region_alloc(handle: *mut OriRegion, size: i64, align: 
     if handle.is_null() || size <= 0 {
         return std::ptr::null_mut();
     }
-    let region_ptr = *(handle as *mut *mut OriRegion);
+    let region_ptr = *handle.cast::<*mut OriRegion>();
     if region_ptr.is_null() {
         return std::ptr::null_mut();
     }
@@ -4100,7 +4096,7 @@ unsafe extern "C" fn ori_region_alloc(handle: *mut OriRegion, size: i64, align: 
 
     if region.chunks.is_empty() {
         let initial_cap = size.max(REGION_DEFAULT_CHUNK_SIZE);
-        let initial_ptr = checked_malloc(initial_cap) as *mut u8;
+        let initial_ptr = checked_malloc(initial_cap).cast::<u8>();
         region.chunks.push(RegionChunk {
             ptr: initial_ptr,
             cap: initial_cap,
@@ -4124,7 +4120,7 @@ unsafe extern "C" fn ori_region_alloc(handle: *mut OriRegion, size: i64, align: 
     let next_chunk_cap = (size + align)
         .max(REGION_DEFAULT_CHUNK_SIZE * 2)
         .next_power_of_two();
-    let next_ptr = checked_malloc(next_chunk_cap) as *mut u8;
+    let next_ptr = checked_malloc(next_chunk_cap).cast::<u8>();
     let new_chunk = RegionChunk {
         ptr: next_ptr,
         cap: next_chunk_cap,
@@ -4148,7 +4144,7 @@ unsafe extern "C" fn ori_region_reset(handle: *mut OriRegion) {
     if handle.is_null() {
         return;
     }
-    let region_ptr = *(handle as *mut *mut OriRegion);
+    let region_ptr = *handle.cast::<*mut OriRegion>();
     if region_ptr.is_null() {
         return;
     }
@@ -4164,14 +4160,14 @@ unsafe extern "C" fn ori_region_free(handle: *mut OriRegion) {
     if handle.is_null() {
         return;
     }
-    let region_ptr = *(handle as *mut *mut OriRegion);
+    let region_ptr = *handle.cast::<*mut OriRegion>();
     if region_ptr.is_null() {
         return;
     }
     let region = &mut *region_ptr;
     for chunk in &region.chunks {
         if !chunk.ptr.is_null() {
-            libc::free(chunk.ptr as *mut libc::c_void);
+            libc::free(chunk.ptr.cast::<libc::c_void>());
         }
     }
     region.chunks.clear();
@@ -4186,7 +4182,7 @@ unsafe extern "C" fn ori_region_size(handle: *mut OriRegion) -> i64 {
     if handle.is_null() {
         return 0;
     }
-    let region_ptr = *(handle as *mut *mut OriRegion);
+    let region_ptr = *handle.cast::<*mut OriRegion>();
     if region_ptr.is_null() {
         return 0;
     }
@@ -4198,7 +4194,7 @@ unsafe extern "C" fn ori_region_count(handle: *mut OriRegion) -> i64 {
     if handle.is_null() {
         return 0;
     }
-    let region_ptr = *(handle as *mut *mut OriRegion);
+    let region_ptr = *handle.cast::<*mut OriRegion>();
     if region_ptr.is_null() {
         return 0;
     }
@@ -4236,7 +4232,7 @@ unsafe extern "C" fn ori_list_pop(list: *mut OriList) -> i64 {
     (*list).len -= 1;
     let value = *(*list).data.add((*list).len as usize);
     (*list).version += 1;
-    transfer_collection_edge_to_return_value(list as *mut u8, value)
+    transfer_collection_edge_to_return_value(list.cast::<u8>(), value)
 }
 
 #[no_mangle]
@@ -4254,7 +4250,7 @@ unsafe extern "C" fn ori_list_remove(list: *mut OriList, index: i64) {
         return;
     }
     let removed = *(*list).data.add(index as usize);
-    unregister_collection_edge(list as *mut u8, removed);
+    unregister_collection_edge(list.cast::<u8>(), removed);
     for i in index..((*list).len - 1) {
         let next = *(*list).data.add((i + 1) as usize);
         *(*list).data.add(i as usize) = next;
@@ -4348,25 +4344,25 @@ unsafe extern "C" fn ori_list_slice(list: *mut OriList, start: i64, end: i64) ->
 
 unsafe fn list_optional_at(list: *mut OriList, index: i64) -> *mut u8 {
     if list.is_null() || index < 0 || index >= (*list).len {
-        return alloc_optional_int(0, 0) as *mut u8;
+        return alloc_optional_int(0, 0).cast::<u8>();
     }
     // The element may be a managed pointer. Keep a temporary ARC edge on the
     // optional result so a caller can copy/read it before the source list is
     // released (for example `ori.args.get_or`). Scalar values are harmless:
     // `header_for_registered` ignores values that are not runtime allocations.
-    alloc_optional_borrowed_managed_value(1, *(*list).data.add(index as usize)) as *mut u8
+    alloc_optional_borrowed_managed_value(1, *(*list).data.add(index as usize)).cast::<u8>()
 }
 
 #[no_mangle]
 unsafe extern "C" fn ori_list_try_get(list: *mut OriList, index: i64) -> *mut OriOptionalInt {
-    list_optional_at(list, index) as *mut OriOptionalInt
+    list_optional_at(list, index).cast::<OriOptionalInt>()
 }
 
 unsafe fn list_clear(list: *mut OriList) {
     if !list.is_null() {
         for i in 0..(*list).len {
             let value = *(*list).data.add(i as usize);
-            unregister_collection_edge(list as *mut u8, value);
+            unregister_collection_edge(list.cast::<u8>(), value);
         }
         (*list).len = 0;
         (*list).version += 1;
@@ -4407,14 +4403,14 @@ pub struct OriDeque {
 }
 
 unsafe extern "C" fn ori_deque_dtor(ptr: *mut u8) {
-    let deque = ptr as *mut OriDeque;
+    let deque = ptr.cast::<OriDeque>();
     if !deque.is_null() {
         std::ptr::drop_in_place(deque);
     }
 }
 
 unsafe fn deque_alloc() -> *mut OriDeque {
-    let deque = ori_alloc(std::mem::size_of::<OriDeque>(), Some(ori_deque_dtor)) as *mut OriDeque;
+    let deque = ori_alloc(std::mem::size_of::<OriDeque>(), Some(ori_deque_dtor)).cast::<OriDeque>();
     if !deque.is_null() {
         std::ptr::write(
             deque,
@@ -4437,23 +4433,23 @@ unsafe fn deque_push_borrowed_maybe_managed(deque: *mut OriDeque, value: i64, fr
         (*deque).values.push_back(value);
     }
     (*deque).version += 1;
-    ori_arc_register_edge(deque as *mut u8, value as *mut u8);
+    ori_arc_register_edge(deque.cast::<u8>(), value as *mut u8);
 }
 
 unsafe fn deque_optional_value(value: Option<i64>) -> *mut u8 {
     match value {
-        Some(value) => alloc_optional_int(1, value) as *mut u8,
-        None => alloc_optional_int(0, 0) as *mut u8,
+        Some(value) => alloc_optional_int(1, value).cast::<u8>(),
+        None => alloc_optional_int(0, 0).cast::<u8>(),
     }
 }
 
 unsafe fn deque_optional_removed_value(deque: *mut OriDeque, value: Option<i64>) -> *mut u8 {
     match value {
         Some(value) => {
-            let value = transfer_collection_edge_to_return_value(deque as *mut u8, value);
-            alloc_optional_owned_managed_value(1, value) as *mut u8
+            let value = transfer_collection_edge_to_return_value(deque.cast::<u8>(), value);
+            alloc_optional_owned_managed_value(1, value).cast::<u8>()
         }
-        None => alloc_optional_int(0, 0) as *mut u8,
+        None => alloc_optional_int(0, 0).cast::<u8>(),
     }
 }
 
@@ -4498,7 +4494,7 @@ unsafe fn deque_insert_after(deque: *mut OriDeque, cursor: i64, value: i64) -> c
     }
     (*deque).values.insert(cursor as usize + 1, value);
     (*deque).version += 1;
-    ori_arc_register_edge(deque as *mut u8, value as *mut u8);
+    ori_arc_register_edge(deque.cast::<u8>(), value as *mut u8);
     1
 }
 
@@ -4508,13 +4504,13 @@ unsafe fn deque_insert_before(deque: *mut OriDeque, cursor: i64, value: i64) -> 
     }
     (*deque).values.insert(cursor as usize, value);
     (*deque).version += 1;
-    ori_arc_register_edge(deque as *mut u8, value as *mut u8);
+    ori_arc_register_edge(deque.cast::<u8>(), value as *mut u8);
     1
 }
 
 unsafe fn deque_remove_at(deque: *mut OriDeque, cursor: i64) -> *mut u8 {
     if deque.is_null() || cursor < 0 || cursor as usize >= (*deque).values.len() {
-        return alloc_optional_int(0, 0) as *mut u8;
+        return alloc_optional_int(0, 0).cast::<u8>();
     }
     let removed = (*deque).values.remove(cursor as usize);
     (*deque).version += 1;
@@ -4523,7 +4519,7 @@ unsafe fn deque_remove_at(deque: *mut OriDeque, cursor: i64) -> *mut u8 {
 
 unsafe fn deque_find_raw(deque: *mut OriDeque, value: i64, value_kind: u8) -> *mut u8 {
     if deque.is_null() {
-        return alloc_optional_int(0, 0) as *mut u8;
+        return alloc_optional_int(0, 0).cast::<u8>();
     }
     for (index, stored) in (*deque).values.iter().copied().enumerate() {
         let found = if value_kind == MAP_KEY_STRING {
@@ -4532,10 +4528,10 @@ unsafe fn deque_find_raw(deque: *mut OriDeque, value: i64, value_kind: u8) -> *m
             stored == value
         };
         if found {
-            return alloc_optional_int(1, index as i64) as *mut u8;
+            return alloc_optional_int(1, index as i64).cast::<u8>();
         }
     }
-    alloc_optional_int(0, 0) as *mut u8
+    alloc_optional_int(0, 0).cast::<u8>()
 }
 
 #[no_mangle]
@@ -4556,7 +4552,7 @@ unsafe extern "C" fn ori_deque_push_back(deque: *mut OriDeque, value: i64) {
 #[no_mangle]
 unsafe extern "C" fn ori_deque_pop_front(deque: *mut OriDeque) -> *mut u8 {
     if deque.is_null() || (*deque).values.is_empty() {
-        return alloc_optional_int(0, 0) as *mut u8;
+        return alloc_optional_int(0, 0).cast::<u8>();
     }
     let val = (*deque).values.pop_front();
     (*deque).version += 1;
@@ -4566,7 +4562,7 @@ unsafe extern "C" fn ori_deque_pop_front(deque: *mut OriDeque) -> *mut u8 {
 #[no_mangle]
 unsafe extern "C" fn ori_deque_pop_back(deque: *mut OriDeque) -> *mut u8 {
     if deque.is_null() || (*deque).values.is_empty() {
-        return alloc_optional_int(0, 0) as *mut u8;
+        return alloc_optional_int(0, 0).cast::<u8>();
     }
     let val = (*deque).values.pop_back();
     (*deque).version += 1;
@@ -4609,7 +4605,7 @@ unsafe extern "C" fn ori_deque_is_empty(deque: *mut OriDeque) -> c_uchar {
 unsafe extern "C" fn ori_deque_clear(deque: *mut OriDeque) {
     if !deque.is_null() {
         for value in (*deque).values.iter().copied() {
-            unregister_collection_edge(deque as *mut u8, value);
+            unregister_collection_edge(deque.cast::<u8>(), value);
         }
         (*deque).values.clear();
         (*deque).version += 1;
@@ -4936,7 +4932,7 @@ pub struct OriTree {
 }
 
 unsafe extern "C" fn ori_tree_dtor(ptr: *mut u8) {
-    let tree = ptr as *mut OriTree;
+    let tree = ptr.cast::<OriTree>();
     if tree.is_null() {
         return;
     }
@@ -4944,37 +4940,37 @@ unsafe extern "C" fn ori_tree_dtor(ptr: *mut u8) {
         for i in 0..(*tree).nodes_len {
             let children = *(*tree).children.add(i as usize);
             if !children.is_null() {
-                ori_arc_release(children as *mut u8);
+                ori_arc_release(children.cast::<u8>());
             }
         }
     }
     if !(*tree).values.is_null() {
-        libc::free((*tree).values as *mut libc::c_void);
+        libc::free((*tree).values.cast::<libc::c_void>());
     }
     if !(*tree).parents.is_null() {
-        libc::free((*tree).parents as *mut libc::c_void);
+        libc::free((*tree).parents.cast::<libc::c_void>());
     }
     if !(*tree).children.is_null() {
-        libc::free((*tree).children as *mut libc::c_void);
+        libc::free((*tree).children.cast::<libc::c_void>());
     }
     if !(*tree).alive.is_null() {
-        libc::free((*tree).alive as *mut libc::c_void);
+        libc::free((*tree).alive.cast::<libc::c_void>());
     }
 }
 
 unsafe fn tree_realloc_i64(ptr: *mut i64, cap: i64) -> *mut i64 {
     let bytes = capacity_bytes(cap, std::mem::size_of::<i64>());
-    checked_realloc(ptr as *mut libc::c_void, bytes) as *mut i64
+    checked_realloc(ptr.cast::<libc::c_void>(), bytes).cast::<i64>()
 }
 
 unsafe fn tree_realloc_children(ptr: *mut *mut OriList, cap: i64) -> *mut *mut OriList {
     let bytes = capacity_bytes(cap, std::mem::size_of::<*mut OriList>());
-    checked_realloc(ptr as *mut libc::c_void, bytes) as *mut *mut OriList
+    checked_realloc(ptr.cast::<libc::c_void>(), bytes).cast::<*mut OriList>()
 }
 
 unsafe fn tree_realloc_alive(ptr: *mut c_uchar, cap: i64) -> *mut c_uchar {
     let bytes = capacity_bytes(cap, std::mem::size_of::<c_uchar>());
-    checked_realloc(ptr as *mut libc::c_void, bytes) as *mut c_uchar
+    checked_realloc(ptr.cast::<libc::c_void>(), bytes).cast::<c_uchar>()
 }
 
 unsafe fn tree_reserve(tree: *mut OriTree, min_cap: i64) {
@@ -5005,7 +5001,7 @@ unsafe fn tree_push_node(tree: *mut OriTree, parent: i64, value: i64) -> i64 {
     *(*tree).alive.add(id as usize) = 1;
     (*tree).nodes_len += 1;
     (*tree).len += 1;
-    ori_arc_register_edge(tree as *mut u8, value as *mut u8);
+    ori_arc_register_edge(tree.cast::<u8>(), value as *mut u8);
     id
 }
 
@@ -5067,19 +5063,19 @@ unsafe fn tree_remove_subtree_inner(tree: *mut OriTree, node: i64) {
         for i in 0..(*child_ids).len {
             tree_remove_subtree_inner(tree, *(*child_ids).data.add(i as usize));
         }
-        ori_arc_release(child_ids as *mut u8);
-        ori_arc_release(children as *mut u8);
+        ori_arc_release(child_ids.cast::<u8>());
+        ori_arc_release(children.cast::<u8>());
         *(*tree).children.add(node as usize) = std::ptr::null_mut();
     }
     let value = *(*tree).values.add(node as usize);
-    ori_arc_unregister_edge(tree as *mut u8, value as *mut u8);
+    ori_arc_unregister_edge(tree.cast::<u8>(), value as *mut u8);
     *(*tree).alive.add(node as usize) = 0;
     (*tree).len -= 1;
 }
 
 #[no_mangle]
 unsafe extern "C" fn ori_tree_new(root_value: i64) -> *mut OriTree {
-    let tree = ori_alloc(std::mem::size_of::<OriTree>(), Some(ori_tree_dtor)) as *mut OriTree;
+    let tree = ori_alloc(std::mem::size_of::<OriTree>(), Some(ori_tree_dtor)).cast::<OriTree>();
     if tree.is_null() {
         return tree;
     }
@@ -5135,7 +5131,7 @@ unsafe extern "C" fn ori_tree_set_value(tree: *mut OriTree, node: i64, value: i6
     let slot = (*tree).values.add(node as usize);
     let old_value = *slot;
     *slot = value;
-    ori_arc_update_edge(tree as *mut u8, old_value as *mut u8, value as *mut u8);
+    ori_arc_update_edge(tree.cast::<u8>(), old_value as *mut u8, value as *mut u8);
     1
 }
 
@@ -5394,11 +5390,11 @@ unsafe extern "C" fn ori_tree_clone_subtree(tree: *mut OriTree, node: i64) -> *m
 
 #[no_mangle]
 unsafe extern "C" fn ori_list_free(list: *mut OriList) {
-    ori_arc_release(list as *mut u8);
+    ori_arc_release(list.cast::<u8>());
 }
 
-/// Map: applies fn_ptr(env_ptr, elem) to each element and returns a new list.
-/// fn_ptr must be compatible with `fn(*const c_void, i64) -> i64`.
+/// Map: applies `fn_ptr(env_ptr`, elem) to each element and returns a new list.
+/// `fn_ptr` must be compatible with `fn(*const c_void, i64) -> i64`.
 #[no_mangle]
 unsafe extern "C" fn ori_list_map(
     list: *mut OriList,
@@ -5417,7 +5413,7 @@ unsafe extern "C" fn ori_list_map(
     out
 }
 
-/// Filter: keeps elements for which fn_ptr(env_ptr, elem) returns non-zero.
+/// Filter: keeps elements for which `fn_ptr(env_ptr`, elem) returns non-zero.
 #[no_mangle]
 unsafe extern "C" fn ori_list_filter(
     list: *mut OriList,
@@ -5460,7 +5456,7 @@ unsafe extern "C" fn ori_iter_flat_map(
         for j in 0..(*inner).len {
             ori_list_push_borrowed_maybe_managed(out, *(*inner).data.add(j as usize));
         }
-        ori_arc_release(inner as *mut u8);
+        ori_arc_release(inner.cast::<u8>());
     }
     out
 }
@@ -5750,15 +5746,15 @@ unsafe extern "C" fn ori_iter_zip(left: *mut OriList, right: *mut OriList) -> *m
     }
     let limit = std::cmp::min((*left).len, (*right).len);
     for i in 0..limit as usize {
-        let pair = ori_alloc(16, None) as *mut i64;
+        let pair = ori_alloc(16, None).cast::<i64>();
         if pair.is_null() {
             continue;
         }
         *pair = *(*left).data.add(i);
         *pair.add(1) = *(*right).data.add(i);
-        ori_arc_register_edge(pair as *mut u8, *pair as *mut u8);
-        ori_arc_register_edge(pair as *mut u8, *pair.add(1) as *mut u8);
-        ori_list_push_owned_managed(out, pair as *mut u8);
+        ori_arc_register_edge(pair.cast::<u8>(), *pair as *mut u8);
+        ori_arc_register_edge(pair.cast::<u8>(), *pair.add(1) as *mut u8);
+        ori_list_push_owned_managed(out, pair.cast::<u8>());
     }
     out
 }
@@ -5769,7 +5765,7 @@ unsafe extern "C" fn ori_iter_partition(
     fn_ptr: *const std::ffi::c_void,
     env_ptr: *const std::ffi::c_void,
 ) -> *mut u8 {
-    let tuple = ori_alloc(16, None) as *mut i64;
+    let tuple = ori_alloc(16, None).cast::<i64>();
     if tuple.is_null() {
         return std::ptr::null_mut();
     }
@@ -5777,12 +5773,12 @@ unsafe extern "C" fn ori_iter_partition(
     let rest = ori_list_new();
     *tuple = matches as i64;
     *tuple.add(1) = rest as i64;
-    ori_arc_register_edge(tuple as *mut u8, matches as *mut u8);
-    ori_arc_register_edge(tuple as *mut u8, rest as *mut u8);
-    ori_arc_release(matches as *mut u8);
-    ori_arc_release(rest as *mut u8);
+    ori_arc_register_edge(tuple.cast::<u8>(), matches.cast::<u8>());
+    ori_arc_register_edge(tuple.cast::<u8>(), rest.cast::<u8>());
+    ori_arc_release(matches.cast::<u8>());
+    ori_arc_release(rest.cast::<u8>());
     if list.is_null() || fn_ptr.is_null() {
-        return tuple as *mut u8;
+        return tuple.cast::<u8>();
     }
     let f: unsafe extern "C" fn(*const std::ffi::c_void, i64) -> c_uchar =
         std::mem::transmute(fn_ptr);
@@ -5794,7 +5790,7 @@ unsafe extern "C" fn ori_iter_partition(
             ori_list_push_borrowed_maybe_managed(rest, elem);
         }
     }
-    tuple as *mut u8
+    tuple.cast::<u8>()
 }
 
 #[no_mangle]
@@ -5817,7 +5813,7 @@ unsafe extern "C" fn ori_iter_group_by(
         } else {
             let bucket = ori_list_new();
             ori_map_set(out, key, bucket as i64);
-            ori_arc_release(bucket as *mut u8);
+            ori_arc_release(bucket.cast::<u8>());
             bucket
         };
         ori_list_push_borrowed_maybe_managed(bucket, elem);
@@ -5848,11 +5844,11 @@ unsafe extern "C" fn ori_iter_group_by_string(
         } else {
             let bucket = ori_list_new();
             ori_map_set_string(out, key, bucket as i64);
-            ori_arc_release(bucket as *mut u8);
+            ori_arc_release(bucket.cast::<u8>());
             bucket
         };
         ori_list_push_borrowed_maybe_managed(bucket, elem);
-        ori_arc_release(key as *mut u8);
+        ori_arc_release(key.cast_mut());
     }
     out
 }
@@ -5906,7 +5902,7 @@ unsafe extern "C" fn ori_string_chars(s: *const u8) -> *mut OriList {
 const HT_EMPTY: i64 = -1;
 const HT_TOMB: i64 = -2;
 
-fn hash_i64(k: i64) -> usize {
+const fn hash_i64(k: i64) -> usize {
     let x = k as u64;
     let x = x ^ (x >> 30);
     let x = x.wrapping_mul(0xbf58476d1ce4e5b9_u64);
@@ -5930,7 +5926,7 @@ fn hash_bytes(bytes: &[u8]) -> usize {
 /// runtime converts them back to `usize` before masking into an open-addressing
 /// table.  Generated helpers never expose Rust's `DefaultHasher` state.
 #[no_mangle]
-unsafe extern "C" fn ori_hash_i64(value: i64) -> i64 {
+const unsafe extern "C" fn ori_hash_i64(value: i64) -> i64 {
     hash_i64(value) as i64
 }
 
@@ -5975,12 +5971,12 @@ pub struct OriSet {
 }
 
 unsafe extern "C" fn ori_set_dtor(ptr: *mut u8) {
-    let set = ptr as *mut OriSet;
+    let set = ptr.cast::<OriSet>();
     if !(*set).items.is_null() {
-        libc::free((*set).items as *mut libc::c_void);
+        libc::free((*set).items.cast::<libc::c_void>());
     }
     if !(*set).ht.is_null() {
-        libc::free((*set).ht as *mut libc::c_void);
+        libc::free((*set).ht.cast::<libc::c_void>());
     }
 }
 
@@ -5990,7 +5986,7 @@ const SET_ITEM_INT: u8 = 1;
 const SET_ITEM_STRING: u8 = 2;
 const SET_ITEM_CUSTOM: u8 = 3;
 
-unsafe fn cstr_value_bytes(value: i64) -> &'static [u8] {
+const unsafe fn cstr_value_bytes(value: i64) -> &'static [u8] {
     if value == 0 {
         &[]
     } else {
@@ -6091,12 +6087,12 @@ unsafe fn set_prepare_item_kind(set: *mut OriSet, item_kind: u8) -> bool {
 }
 
 unsafe fn set_alloc() -> *mut OriSet {
-    let set = ori_alloc(std::mem::size_of::<OriSet>(), Some(ori_set_dtor)) as *mut OriSet;
+    let set = ori_alloc(std::mem::size_of::<OriSet>(), Some(ori_set_dtor)).cast::<OriSet>();
     if !set.is_null() {
-        let items = checked_malloc(8 * std::mem::size_of::<i64>()) as *mut i64;
+        let items = checked_malloc(8 * std::mem::size_of::<i64>()).cast::<i64>();
         let ht_bytes = INITIAL_SET_HT_CAP * std::mem::size_of::<i64>();
-        let ht = checked_malloc(ht_bytes) as *mut i64;
-        std::ptr::write_bytes(ht as *mut u8, 0xFF, ht_bytes); // fill with -1
+        let ht = checked_malloc(ht_bytes).cast::<i64>();
+        std::ptr::write_bytes(ht.cast::<u8>(), 0xFF, ht_bytes); // fill with -1
         (*set).items = items;
         (*set).len = 0;
         (*set).cap = 8;
@@ -6113,7 +6109,7 @@ unsafe fn set_alloc() -> *mut OriSet {
 unsafe fn set_rebuild_ht(set: *mut OriSet) {
     let ht_cap = (*set).ht_cap as usize;
     std::ptr::write_bytes(
-        (*set).ht as *mut u8,
+        (*set).ht.cast::<u8>(),
         0xFF,
         ht_cap * std::mem::size_of::<i64>(),
     );
@@ -6132,7 +6128,7 @@ unsafe fn set_grow(set: *mut OriSet) {
     let new_ht_cap =
         grown_capacity((*set).ht_cap, (*set).ht_cap + 1, std::mem::size_of::<i64>()) as usize;
     let ht_bytes = capacity_bytes(new_ht_cap as i64, std::mem::size_of::<i64>());
-    let new_ht = checked_realloc((*set).ht as *mut libc::c_void, ht_bytes) as *mut i64;
+    let new_ht = checked_realloc((*set).ht.cast::<libc::c_void>(), ht_bytes).cast::<i64>();
     (*set).ht = new_ht;
     (*set).ht_cap = new_ht_cap as i64;
     set_rebuild_ht(set);
@@ -6144,9 +6140,10 @@ unsafe fn set_reserve_capacity(set: *mut OriSet, capacity: i64) {
     }
     let target_cap = capacity.max(1);
     (*set).items = checked_realloc(
-        (*set).items as *mut libc::c_void,
+        (*set).items.cast::<libc::c_void>(),
         capacity_bytes(target_cap, std::mem::size_of::<i64>()),
-    ) as *mut i64;
+    )
+    .cast::<i64>();
     (*set).cap = target_cap;
 
     let mut target_ht_cap = INITIAL_SET_HT_CAP;
@@ -6156,7 +6153,7 @@ unsafe fn set_reserve_capacity(set: *mut OriSet, capacity: i64) {
     }
     if target_ht_cap > (*set).ht_cap as usize {
         let ht_bytes = capacity_bytes(target_ht_cap as i64, std::mem::size_of::<i64>());
-        (*set).ht = checked_realloc((*set).ht as *mut libc::c_void, ht_bytes) as *mut i64;
+        (*set).ht = checked_realloc((*set).ht.cast::<libc::c_void>(), ht_bytes).cast::<i64>();
         (*set).ht_cap = target_ht_cap as i64;
         set_rebuild_ht(set);
     }
@@ -6270,9 +6267,10 @@ unsafe fn ori_set_add_raw(set: *mut OriSet, value: i64, item_kind: u8) {
     if (*set).len >= (*set).cap {
         let new_cap = grown_capacity((*set).cap, (*set).cap + 1, std::mem::size_of::<i64>());
         (*set).items = checked_realloc(
-            (*set).items as *mut libc::c_void,
+            (*set).items.cast::<libc::c_void>(),
             capacity_bytes(new_cap, std::mem::size_of::<i64>()),
-        ) as *mut i64;
+        )
+        .cast::<i64>();
         (*set).cap = new_cap;
     }
     // Grow hash table at 50% load. Legacy equality-only custom elements keep
@@ -6359,7 +6357,7 @@ unsafe extern "C" fn ori_set_remove_custom(set: *mut OriSet, value: i64) {
         ht_lookup_set_custom(set, value)
     };
     let removed = *(*set).items.add(dense_idx);
-    unregister_collection_edge(set as *mut u8, removed);
+    unregister_collection_edge(set.cast::<u8>(), removed);
     let last_idx = (*set).len as usize - 1;
     if dense_idx != last_idx {
         let last_value = *(*set).items.add(last_idx);
@@ -6426,7 +6424,7 @@ unsafe fn ori_set_remove_raw(set: *mut OriSet, value: i64, item_kind: u8) {
     }
     let dense_idx = *(*set).ht.add(slot) as usize;
     let removed = *(*set).items.add(dense_idx);
-    unregister_collection_edge(set as *mut u8, removed);
+    unregister_collection_edge(set.cast::<u8>(), removed);
     *(*set).ht.add(slot) = HT_TOMB;
     let last_idx = (*set).len as usize - 1;
     if dense_idx != last_idx {
@@ -6472,14 +6470,14 @@ unsafe extern "C" fn ori_set_clear(set: *mut OriSet) {
     }
     for i in 0..(*set).len {
         let value = *(*set).items.add(i as usize);
-        unregister_collection_edge(set as *mut u8, value);
+        unregister_collection_edge(set.cast::<u8>(), value);
     }
     (*set).len = 0;
     (*set).item_kind = SET_ITEM_UNKNOWN;
     (*set).hash_fn = std::ptr::null();
     (*set).eq_fn = std::ptr::null();
     std::ptr::write_bytes(
-        (*set).ht as *mut u8,
+        (*set).ht.cast::<u8>(),
         0xFF,
         (*set).ht_cap as usize * std::mem::size_of::<i64>(),
     );
@@ -6572,12 +6570,12 @@ unsafe extern "C" fn ori_set_from_list_custom_with_hash(
 
 #[no_mangle]
 unsafe extern "C" fn ori_set_free(set: *mut OriSet) {
-    ori_arc_release(set as *mut u8);
+    ori_arc_release(set.cast::<u8>());
 }
 
 #[no_mangle]
 unsafe extern "C" fn ori_set_union(a: *mut OriSet, b: *mut OriSet) -> *mut OriSet {
-    let source = if !a.is_null() { a } else { b };
+    let source = if a.is_null() { b } else { a };
     let out = if !source.is_null() && (*source).item_kind == SET_ITEM_CUSTOM {
         ori_set_new_custom_with_hash((*source).hash_fn, (*source).eq_fn)
     } else {
@@ -6662,15 +6660,15 @@ pub struct OriMap {
 }
 
 unsafe extern "C" fn ori_map_dtor(ptr: *mut u8) {
-    let map = ptr as *mut OriMap;
+    let map = ptr.cast::<OriMap>();
     if !(*map).keys.is_null() {
-        libc::free((*map).keys as *mut libc::c_void);
+        libc::free((*map).keys.cast::<libc::c_void>());
     }
     if !(*map).values.is_null() {
-        libc::free((*map).values as *mut libc::c_void);
+        libc::free((*map).values.cast::<libc::c_void>());
     }
     if !(*map).ht.is_null() {
-        libc::free((*map).ht as *mut libc::c_void);
+        libc::free((*map).ht.cast::<libc::c_void>());
     }
 }
 
@@ -6680,7 +6678,7 @@ const MAP_KEY_INT: u8 = 1;
 const MAP_KEY_STRING: u8 = 2;
 const MAP_KEY_CUSTOM: u8 = 3;
 
-unsafe fn cstr_key_bytes(key: i64) -> &'static [u8] {
+const unsafe fn cstr_key_bytes(key: i64) -> &'static [u8] {
     if key == 0 {
         &[]
     } else {
@@ -6766,12 +6764,12 @@ unsafe fn map_alloc_with(
     let cap = 8_i64;
     let bytes = cap as usize * std::mem::size_of::<i64>();
     let ht_bytes = INITIAL_MAP_HT_CAP * std::mem::size_of::<i64>();
-    let map = ori_alloc(std::mem::size_of::<OriMap>(), Some(ori_map_dtor)) as *mut OriMap;
+    let map = ori_alloc(std::mem::size_of::<OriMap>(), Some(ori_map_dtor)).cast::<OriMap>();
     if !map.is_null() {
-        let ht = checked_malloc(ht_bytes) as *mut i64;
-        std::ptr::write_bytes(ht as *mut u8, 0xFF, ht_bytes); // fill with -1
-        (*map).keys = checked_malloc(bytes) as *mut i64;
-        (*map).values = checked_malloc(bytes) as *mut i64;
+        let ht = checked_malloc(ht_bytes).cast::<i64>();
+        std::ptr::write_bytes(ht.cast::<u8>(), 0xFF, ht_bytes); // fill with -1
+        (*map).keys = checked_malloc(bytes).cast::<i64>();
+        (*map).values = checked_malloc(bytes).cast::<i64>();
         (*map).len = 0;
         (*map).cap = cap;
         (*map).version = 0;
@@ -6787,7 +6785,7 @@ unsafe fn map_alloc_with(
 unsafe fn map_rebuild_ht(map: *mut OriMap) {
     let ht_cap = (*map).ht_cap as usize;
     std::ptr::write_bytes(
-        (*map).ht as *mut u8,
+        (*map).ht.cast::<u8>(),
         0xFF,
         ht_cap * std::mem::size_of::<i64>(),
     );
@@ -6802,7 +6800,7 @@ unsafe fn map_grow(map: *mut OriMap) {
     let new_ht_cap =
         grown_capacity((*map).ht_cap, (*map).ht_cap + 1, std::mem::size_of::<i64>()) as usize;
     let ht_bytes = capacity_bytes(new_ht_cap as i64, std::mem::size_of::<i64>());
-    let new_ht = checked_realloc((*map).ht as *mut libc::c_void, ht_bytes) as *mut i64;
+    let new_ht = checked_realloc((*map).ht.cast::<libc::c_void>(), ht_bytes).cast::<i64>();
     (*map).ht = new_ht;
     (*map).ht_cap = new_ht_cap as i64;
     map_rebuild_ht(map);
@@ -6814,8 +6812,8 @@ unsafe fn map_reserve_capacity(map: *mut OriMap, capacity: i64) {
     }
     let target_cap = capacity.max(1);
     let bytes = capacity_bytes(target_cap, std::mem::size_of::<i64>());
-    (*map).keys = checked_realloc((*map).keys as *mut libc::c_void, bytes) as *mut i64;
-    (*map).values = checked_realloc((*map).values as *mut libc::c_void, bytes) as *mut i64;
+    (*map).keys = checked_realloc((*map).keys.cast::<libc::c_void>(), bytes).cast::<i64>();
+    (*map).values = checked_realloc((*map).values.cast::<libc::c_void>(), bytes).cast::<i64>();
     (*map).cap = target_cap;
 
     let mut target_ht_cap = INITIAL_MAP_HT_CAP;
@@ -6825,7 +6823,7 @@ unsafe fn map_reserve_capacity(map: *mut OriMap, capacity: i64) {
     }
     if target_ht_cap > (*map).ht_cap as usize {
         let ht_bytes = capacity_bytes(target_ht_cap as i64, std::mem::size_of::<i64>());
-        (*map).ht = checked_realloc((*map).ht as *mut libc::c_void, ht_bytes) as *mut i64;
+        (*map).ht = checked_realloc((*map).ht.cast::<libc::c_void>(), ht_bytes).cast::<i64>();
         (*map).ht_cap = target_ht_cap as i64;
         map_rebuild_ht(map);
     }
@@ -6855,7 +6853,7 @@ unsafe fn ori_map_set_raw(map: *mut OriMap, key: i64, value: i64, key_kind: u8) 
     if existing != usize::MAX {
         let dense_idx = *(*map).ht.add(existing) as usize;
         let old_value = *(*map).values.add(dense_idx);
-        ori_arc_update_edge(map as *mut u8, old_value as *mut u8, value as *mut u8);
+        ori_arc_update_edge(map.cast::<u8>(), old_value as *mut u8, value as *mut u8);
         *(*map).values.add(dense_idx) = value;
         (*map).version += 1;
         return;
@@ -6864,8 +6862,8 @@ unsafe fn ori_map_set_raw(map: *mut OriMap, key: i64, value: i64, key_kind: u8) 
     if (*map).len >= (*map).cap {
         let new_cap = grown_capacity((*map).cap, (*map).cap + 1, std::mem::size_of::<i64>());
         let bytes = capacity_bytes(new_cap, std::mem::size_of::<i64>());
-        (*map).keys = checked_realloc((*map).keys as *mut libc::c_void, bytes) as *mut i64;
-        (*map).values = checked_realloc((*map).values as *mut libc::c_void, bytes) as *mut i64;
+        (*map).keys = checked_realloc((*map).keys.cast::<libc::c_void>(), bytes).cast::<i64>();
+        (*map).values = checked_realloc((*map).values.cast::<libc::c_void>(), bytes).cast::<i64>();
         (*map).cap = new_cap;
     }
     // Grow hash table at 50% load
@@ -6880,8 +6878,8 @@ unsafe fn ori_map_set_raw(map: *mut OriMap, key: i64, value: i64, key_kind: u8) 
     // The map owns managed keys and values. Register both edges before any
     // caller releases its temporary references (for example, process capture
     // fields are freshly allocated strings).
-    ori_arc_register_edge(map as *mut u8, key as *mut u8);
-    ori_arc_register_edge(map as *mut u8, value as *mut u8);
+    ori_arc_register_edge(map.cast::<u8>(), key as *mut u8);
+    ori_arc_register_edge(map.cast::<u8>(), value as *mut u8);
     let slot = ht_find_insert_slot_map(map, key);
     *(*map).ht.add(slot) = dense_idx as i64;
     (*map).version += 1;
@@ -7037,8 +7035,8 @@ unsafe fn ori_map_remove_raw(map: *mut OriMap, key: i64, key_kind: u8) {
     let dense_idx = *(*map).ht.add(slot) as usize;
     let removed_key = *(*map).keys.add(dense_idx);
     let removed_value = *(*map).values.add(dense_idx);
-    unregister_collection_edge(map as *mut u8, removed_key);
-    unregister_collection_edge(map as *mut u8, removed_value);
+    unregister_collection_edge(map.cast::<u8>(), removed_key);
+    unregister_collection_edge(map.cast::<u8>(), removed_value);
     *(*map).ht.add(slot) = HT_TOMB;
     let last_idx = (*map).len as usize - 1;
     if dense_idx != last_idx {
@@ -7141,15 +7139,15 @@ unsafe extern "C" fn ori_map_entries(map: *mut OriMap) -> *mut OriList {
         return out;
     }
     for i in 0..(*map).len {
-        let tuple = ori_alloc(16, None) as *mut i64;
+        let tuple = ori_alloc(16, None).cast::<i64>();
         if tuple.is_null() {
             continue;
         }
         *tuple.add(0) = *(*map).keys.add(i as usize);
         *tuple.add(1) = *(*map).values.add(i as usize);
-        ori_arc_register_edge(tuple as *mut u8, *tuple.add(0) as *mut u8);
-        ori_arc_register_edge(tuple as *mut u8, *tuple.add(1) as *mut u8);
-        ori_list_push_owned_managed(out, tuple as *mut u8);
+        ori_arc_register_edge(tuple.cast::<u8>(), *tuple.add(0) as *mut u8);
+        ori_arc_register_edge(tuple.cast::<u8>(), *tuple.add(1) as *mut u8);
+        ori_list_push_owned_managed(out, tuple.cast::<u8>());
     }
     out
 }
@@ -7201,15 +7199,15 @@ unsafe extern "C" fn ori_map_clear(map: *mut OriMap) {
     for i in 0..(*map).len {
         let key = *(*map).keys.add(i as usize);
         let value = *(*map).values.add(i as usize);
-        unregister_collection_edge(map as *mut u8, key);
-        unregister_collection_edge(map as *mut u8, value);
+        unregister_collection_edge(map.cast::<u8>(), key);
+        unregister_collection_edge(map.cast::<u8>(), value);
     }
     (*map).len = 0;
     (*map).key_kind = MAP_KEY_UNKNOWN;
     (*map).hash_fn = std::ptr::null();
     (*map).eq_fn = std::ptr::null();
     std::ptr::write_bytes(
-        (*map).ht as *mut u8,
+        (*map).ht.cast::<u8>(),
         0xFF,
         (*map).ht_cap as usize * std::mem::size_of::<i64>(),
     );
@@ -7308,7 +7306,7 @@ unsafe extern "C" fn ori_map_from_entries_custom_with_hash(
 
 #[no_mangle]
 unsafe extern "C" fn ori_map_free(map: *mut OriMap) {
-    ori_arc_release(map as *mut u8);
+    ori_arc_release(map.cast::<u8>());
 }
 
 #[no_mangle]
@@ -7517,26 +7515,26 @@ pub struct OriGraph {
 }
 
 unsafe extern "C" fn ori_graph_dtor(ptr: *mut u8) {
-    let graph = ptr as *mut OriGraph;
+    let graph = ptr.cast::<OriGraph>();
     if graph.is_null() {
         return;
     }
     if !(*graph).nodes.is_null() {
-        libc::free((*graph).nodes as *mut libc::c_void);
+        libc::free((*graph).nodes.cast::<libc::c_void>());
     }
     if !(*graph).edge_from.is_null() {
-        libc::free((*graph).edge_from as *mut libc::c_void);
+        libc::free((*graph).edge_from.cast::<libc::c_void>());
     }
     if !(*graph).edge_to.is_null() {
-        libc::free((*graph).edge_to as *mut libc::c_void);
+        libc::free((*graph).edge_to.cast::<libc::c_void>());
     }
     if !(*graph).edge_weight.is_null() {
-        libc::free((*graph).edge_weight as *mut libc::c_void);
+        libc::free((*graph).edge_weight.cast::<libc::c_void>());
     }
 }
 
 unsafe fn graph_alloc_array(cap: i64) -> *mut i64 {
-    checked_calloc(cap.max(0) as usize, std::mem::size_of::<i64>()) as *mut i64
+    checked_calloc(cap.max(0) as usize, std::mem::size_of::<i64>()).cast::<i64>()
 }
 
 unsafe fn graph_reserve_nodes(graph: *mut OriGraph, min_cap: i64) {
@@ -7545,7 +7543,7 @@ unsafe fn graph_reserve_nodes(graph: *mut OriGraph, min_cap: i64) {
     }
     let next_cap = grown_capacity((*graph).cap, min_cap, std::mem::size_of::<i64>());
     let bytes = capacity_bytes(next_cap, std::mem::size_of::<i64>());
-    (*graph).nodes = checked_realloc((*graph).nodes as *mut libc::c_void, bytes) as *mut i64;
+    (*graph).nodes = checked_realloc((*graph).nodes.cast::<libc::c_void>(), bytes).cast::<i64>();
     (*graph).cap = next_cap;
 }
 
@@ -7556,10 +7554,11 @@ unsafe fn graph_reserve_edges(graph: *mut OriGraph, min_cap: i64) {
     let next_cap = grown_capacity((*graph).edge_cap, min_cap, std::mem::size_of::<i64>());
     let bytes = capacity_bytes(next_cap, std::mem::size_of::<i64>());
     (*graph).edge_from =
-        checked_realloc((*graph).edge_from as *mut libc::c_void, bytes) as *mut i64;
-    (*graph).edge_to = checked_realloc((*graph).edge_to as *mut libc::c_void, bytes) as *mut i64;
+        checked_realloc((*graph).edge_from.cast::<libc::c_void>(), bytes).cast::<i64>();
+    (*graph).edge_to =
+        checked_realloc((*graph).edge_to.cast::<libc::c_void>(), bytes).cast::<i64>();
     (*graph).edge_weight =
-        checked_realloc((*graph).edge_weight as *mut libc::c_void, bytes) as *mut i64;
+        checked_realloc((*graph).edge_weight.cast::<libc::c_void>(), bytes).cast::<i64>();
     (*graph).edge_cap = next_cap;
 }
 
@@ -7691,7 +7690,7 @@ unsafe fn graph_add_node_raw(graph: *mut OriGraph, node: i64, node_kind: u8) -> 
     *(*graph).nodes.add((*graph).len as usize) = node;
     (*graph).len += 1;
     (*graph).version += 1;
-    ori_arc_register_edge(graph as *mut u8, node as *mut u8);
+    ori_arc_register_edge(graph.cast::<u8>(), node as *mut u8);
     node
 }
 
@@ -7770,7 +7769,7 @@ unsafe fn graph_remove_node_raw(graph: *mut OriGraph, node: i64, node_kind: u8) 
         return;
     }
     let stored = *(*graph).nodes.add(index as usize);
-    ori_arc_unregister_edge(graph as *mut u8, stored as *mut u8);
+    ori_arc_unregister_edge(graph.cast::<u8>(), stored as *mut u8);
     for i in index..((*graph).len - 1) {
         *(*graph).nodes.add(i as usize) = *(*graph).nodes.add((i + 1) as usize);
     }
@@ -7792,7 +7791,7 @@ unsafe fn graph_remove_node_raw(graph: *mut OriGraph, node: i64, node_kind: u8) 
 
 #[no_mangle]
 unsafe extern "C" fn ori_graph_new(directed: c_uchar) -> *mut OriGraph {
-    let graph = ori_alloc(std::mem::size_of::<OriGraph>(), Some(ori_graph_dtor)) as *mut OriGraph;
+    let graph = ori_alloc(std::mem::size_of::<OriGraph>(), Some(ori_graph_dtor)).cast::<OriGraph>();
     if !graph.is_null() {
         (*graph).nodes = graph_alloc_array(8);
         (*graph).len = 0;
@@ -8013,15 +8012,15 @@ unsafe extern "C" fn ori_graph_edges(graph: *mut OriGraph) -> *mut OriList {
         return out;
     }
     for i in 0..(*graph).edge_len {
-        let tuple = ori_alloc(16, None) as *mut i64;
+        let tuple = ori_alloc(16, None).cast::<i64>();
         if tuple.is_null() {
             continue;
         }
         *tuple.add(0) = *(*graph).edge_from.add(i as usize);
         *tuple.add(1) = *(*graph).edge_to.add(i as usize);
-        ori_arc_register_edge(tuple as *mut u8, *tuple.add(0) as *mut u8);
-        ori_arc_register_edge(tuple as *mut u8, *tuple.add(1) as *mut u8);
-        ori_list_push_owned_managed(out, tuple as *mut u8);
+        ori_arc_register_edge(tuple.cast::<u8>(), *tuple.add(0) as *mut u8);
+        ori_arc_register_edge(tuple.cast::<u8>(), *tuple.add(1) as *mut u8);
+        ori_list_push_owned_managed(out, tuple.cast::<u8>());
     }
     out
 }
@@ -8293,7 +8292,7 @@ unsafe extern "C" fn ori_graph_components(graph: *mut OriGraph) -> *mut OriList 
                 }
             }
         }
-        ori_list_push_owned_managed(out, component as *mut u8);
+        ori_list_push_owned_managed(out, component.cast::<u8>());
     }
     out
 }
@@ -8337,7 +8336,7 @@ impl StronglyConnectedTraversal {
                 break;
             }
         }
-        ori_list_push_owned_managed(self.output, component as *mut u8);
+        ori_list_push_owned_managed(self.output, component.cast::<u8>());
     }
 }
 
@@ -8500,11 +8499,7 @@ unsafe fn graph_shortest_weighted_path_raw(
     for _ in 0..len {
         let mut current: Option<usize> = None;
         for index in 0..len {
-            if !visited[index]
-                && current
-                    .map(|candidate| dist[index] < dist[candidate])
-                    .unwrap_or(true)
-            {
+            if !visited[index] && current.is_none_or(|candidate| dist[index] < dist[candidate]) {
                 current = Some(index);
             }
         }
@@ -8604,22 +8599,22 @@ const HEAP_ITEM_UNKNOWN: u8 = 0;
 type HeapCompareFn = unsafe extern "C" fn(i64, i64) -> i64;
 
 unsafe extern "C" fn ori_heap_dtor(ptr: *mut u8) {
-    let heap = ptr as *mut OriHeap;
+    let heap = ptr.cast::<OriHeap>();
     if heap.is_null() {
         return;
     }
     if !(*heap).data.is_null() {
-        libc::free((*heap).data as *mut libc::c_void);
+        libc::free((*heap).data.cast::<libc::c_void>());
     }
 }
 
 unsafe fn heap_new_with(kind: u8, compare_fn: *const std::ffi::c_void) -> *mut OriHeap {
-    let heap = ori_alloc(std::mem::size_of::<OriHeap>(), Some(ori_heap_dtor)) as *mut OriHeap;
+    let heap = ori_alloc(std::mem::size_of::<OriHeap>(), Some(ori_heap_dtor)).cast::<OriHeap>();
     if heap.is_null() {
         return heap;
     }
     let cap = 8_i64;
-    (*heap).data = checked_calloc(cap as usize, std::mem::size_of::<i64>()) as *mut i64;
+    (*heap).data = checked_calloc(cap as usize, std::mem::size_of::<i64>()).cast::<i64>();
     (*heap).len = 0;
     (*heap).cap = cap;
     (*heap).version = 0;
@@ -8667,7 +8662,7 @@ unsafe fn heap_reserve(heap: *mut OriHeap, min_cap: i64) {
     }
     let next_cap = grown_capacity((*heap).cap, min_cap, std::mem::size_of::<i64>());
     let bytes = capacity_bytes(next_cap, std::mem::size_of::<i64>());
-    (*heap).data = checked_realloc((*heap).data as *mut libc::c_void, bytes) as *mut i64;
+    (*heap).data = checked_realloc((*heap).data.cast::<libc::c_void>(), bytes).cast::<i64>();
     (*heap).cap = next_cap;
 }
 
@@ -8780,7 +8775,7 @@ unsafe extern "C" fn ori_heap_push_custom(
 ) {
     // Register ARC edge before pushing to prevent the element from being
     // collected during heap_sift_up comparisons (which call retain/release).
-    ori_arc_register_edge(heap as *mut u8, value as *mut u8);
+    ori_arc_register_edge(heap.cast::<u8>(), value as *mut u8);
     heap_push_raw(heap, value, HEAP_ITEM_CUSTOM, compare_fn);
 }
 
@@ -8827,7 +8822,7 @@ unsafe fn heap_push_borrowed_maybe_managed(
     item_kind: u8,
     compare_fn: *const std::ffi::c_void,
 ) {
-    ori_arc_register_edge(heap as *mut u8, value as *mut u8);
+    ori_arc_register_edge(heap.cast::<u8>(), value as *mut u8);
     heap_push_raw(heap, value, item_kind, compare_fn);
 }
 
@@ -8843,7 +8838,7 @@ unsafe fn heap_alloc_optional_value(
     match (*heap).item_kind {
         HEAP_ITEM_STRING | HEAP_ITEM_CUSTOM => {
             if transfer_from_heap {
-                let value = transfer_collection_edge_to_return_value(heap as *mut u8, value);
+                let value = transfer_collection_edge_to_return_value(heap.cast::<u8>(), value);
                 alloc_optional_owned_managed_value(1, value)
             } else {
                 alloc_optional_borrowed_managed_value(1, value)
@@ -8859,7 +8854,7 @@ unsafe extern "C" fn ori_heap_clear(heap: *mut OriHeap) {
         return;
     }
     for i in 0..(*heap).len {
-        ori_arc_unregister_edge(heap as *mut u8, *(*heap).data.add(i as usize) as *mut u8);
+        ori_arc_unregister_edge(heap.cast::<u8>(), *(*heap).data.add(i as usize) as *mut u8);
     }
     (*heap).len = 0;
     (*heap).version += 1;
@@ -8970,7 +8965,7 @@ unsafe fn heap_remove_raw(
         if heap_compare(heap, current, value) != 0 {
             continue;
         }
-        ori_arc_unregister_edge(heap as *mut u8, current as *mut u8);
+        ori_arc_unregister_edge(heap.cast::<u8>(), current as *mut u8);
         (*heap).len -= 1;
         if index != (*heap).len {
             *(*heap).data.add(index as usize) = *(*heap).data.add((*heap).len as usize);
@@ -9016,9 +9011,9 @@ unsafe extern "C" fn ori_heap_into_sorted_list(heap: *mut OriHeap) -> *mut OriLi
         if !item.is_null() && (*item).has_value != 0 {
             ori_list_push_borrowed_maybe_managed(out, (*item).value);
         }
-        ori_arc_release(item as *mut u8);
+        ori_arc_release(item.cast::<u8>());
     }
-    ori_arc_release(work as *mut u8);
+    ori_arc_release(work.cast::<u8>());
     out
 }
 
@@ -9033,17 +9028,17 @@ pub extern "C" fn ori_math_pow(base: f64, exp: f64) -> f64 {
 }
 
 #[no_mangle]
-pub extern "C" fn ori_math_floor(value: f64) -> i64 {
+pub const extern "C" fn ori_math_floor(value: f64) -> i64 {
     value.floor() as i64
 }
 
 #[no_mangle]
-pub extern "C" fn ori_math_ceil(value: f64) -> i64 {
+pub const extern "C" fn ori_math_ceil(value: f64) -> i64 {
     value.ceil() as i64
 }
 
 #[no_mangle]
-pub extern "C" fn ori_math_round(value: f64) -> i64 {
+pub const extern "C" fn ori_math_round(value: f64) -> i64 {
     value.round() as i64
 }
 
@@ -9073,12 +9068,12 @@ pub extern "C" fn ori_math_tan(value: f64) -> f64 {
 }
 
 #[no_mangle]
-pub extern "C" fn ori_math_abs(value: i64) -> i64 {
+pub const extern "C" fn ori_math_abs(value: i64) -> i64 {
     value.abs()
 }
 
 #[no_mangle]
-pub extern "C" fn ori_math_abs_float(value: f64) -> f64 {
+pub const extern "C" fn ori_math_abs_float(value: f64) -> f64 {
     value.abs()
 }
 
@@ -9088,7 +9083,7 @@ pub extern "C" fn ori_math_min(a: i64, b: i64) -> i64 {
 }
 
 #[no_mangle]
-pub extern "C" fn ori_math_min_float(a: f64, b: f64) -> f64 {
+pub const extern "C" fn ori_math_min_float(a: f64, b: f64) -> f64 {
     a.min(b)
 }
 
@@ -9098,7 +9093,7 @@ pub extern "C" fn ori_math_max(a: i64, b: i64) -> i64 {
 }
 
 #[no_mangle]
-pub extern "C" fn ori_math_max_float(a: f64, b: f64) -> f64 {
+pub const extern "C" fn ori_math_max_float(a: f64, b: f64) -> f64 {
     a.max(b)
 }
 
@@ -9134,7 +9129,7 @@ pub extern "C" fn ori_time_sleep(millis: i64) {
 }
 
 #[no_mangle]
-pub extern "C" fn ori_time_duration_ms(start: i64, end: i64) -> i64 {
+pub const extern "C" fn ori_time_duration_ms(start: i64, end: i64) -> i64 {
     end - start
 }
 
@@ -9320,7 +9315,7 @@ fn random_seed() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::ZERO)
         .as_nanos() as u64;
-    let addr = (&RANDOM_STATE as *const AtomicU64 as usize) as u64;
+    let addr = (&raw const RANDOM_STATE as usize) as u64;
     let seed = nanos ^ u64::from(std::process::id()) ^ addr;
     if seed == 0 {
         0x9e37_79b9_7f4a_7c15
@@ -9368,7 +9363,7 @@ pub extern "C" fn ori_random_float(mut min: f64, mut max: f64) -> f64 {
     if max < min {
         std::mem::swap(&mut min, &mut max);
     }
-    min + (max - min) * random_unit_float()
+    (max - min).mul_add(random_unit_float(), min)
 }
 
 #[no_mangle]
@@ -9414,48 +9409,48 @@ unsafe fn to_ori_json_value(val: serde_json::Value) -> *mut u8 {
     }
     match val {
         serde_json::Value::Null => {
-            *(ptr as *mut i32) = 0;
-            *(ptr.add(8) as *mut u64) = 0;
+            *ptr.cast::<i32>() = 0;
+            *ptr.add(8).cast::<u64>() = 0;
         }
         serde_json::Value::Bool(b) => {
-            *(ptr as *mut i32) = 1;
-            *ptr.add(8) = if b { 1 } else { 0 };
+            *ptr.cast::<i32>() = 1;
+            *ptr.add(8) = u8::from(b);
         }
         serde_json::Value::Number(num) => {
-            *(ptr as *mut i32) = 2;
+            *ptr.cast::<i32>() = 2;
             let f = num.as_f64().unwrap_or(0.0);
-            *(ptr.add(8) as *mut f64) = f;
+            *ptr.add(8).cast::<f64>() = f;
         }
         serde_json::Value::String(s) => {
-            *(ptr as *mut i32) = 3;
+            *ptr.cast::<i32>() = 3;
             let s_ptr = cstring_from_str(&s);
-            *(ptr.add(8) as *mut *mut u8) = s_ptr;
+            *ptr.add(8).cast::<*mut u8>() = s_ptr;
             ori_arc_register_edge(ptr, s_ptr);
             ori_arc_release(s_ptr);
         }
         serde_json::Value::Array(arr) => {
-            *(ptr as *mut i32) = 4;
-            let list_ptr = ori_list_new() as *mut u8;
+            *ptr.cast::<i32>() = 4;
+            let list_ptr = ori_list_new().cast::<u8>();
             for item in arr {
                 let item_ptr = to_ori_json_value(item);
-                ori_list_push_borrowed_maybe_managed(list_ptr as *mut OriList, item_ptr as i64);
+                ori_list_push_borrowed_maybe_managed(list_ptr.cast::<OriList>(), item_ptr as i64);
                 ori_arc_release(item_ptr);
             }
-            *(ptr.add(8) as *mut *mut u8) = list_ptr;
+            *ptr.add(8).cast::<*mut u8>() = list_ptr;
             ori_arc_register_edge(ptr, list_ptr);
             ori_arc_release(list_ptr);
         }
         serde_json::Value::Object(obj) => {
-            *(ptr as *mut i32) = 5;
-            let map_ptr = ori_map_new() as *mut u8;
+            *ptr.cast::<i32>() = 5;
+            let map_ptr = ori_map_new().cast::<u8>();
             for (k, v) in obj {
                 let key_ptr = cstring_from_str(&k);
                 let val_ptr = to_ori_json_value(v);
-                ori_map_set_string(map_ptr as *mut OriMap, key_ptr, val_ptr as i64);
+                ori_map_set_string(map_ptr.cast::<OriMap>(), key_ptr, val_ptr as i64);
                 ori_arc_release(key_ptr);
                 ori_arc_release(val_ptr);
             }
-            *(ptr.add(8) as *mut *mut u8) = map_ptr;
+            *ptr.add(8).cast::<*mut u8>() = map_ptr;
             ori_arc_register_edge(ptr, map_ptr);
             ori_arc_release(map_ptr);
         }
@@ -9467,7 +9462,7 @@ unsafe fn from_ori_json_value(ptr: *const u8) -> serde_json::Value {
     if ptr.is_null() {
         return serde_json::Value::Null;
     }
-    let tag = *(ptr as *const i32);
+    let tag = *ptr.cast::<i32>();
     match tag {
         0 => serde_json::Value::Null,
         1 => {
@@ -9475,18 +9470,17 @@ unsafe fn from_ori_json_value(ptr: *const u8) -> serde_json::Value {
             serde_json::Value::Bool(b != 0)
         }
         2 => {
-            let f = *(ptr.add(8) as *const f64);
+            let f = *ptr.add(8).cast::<f64>();
             serde_json::Number::from_f64(f)
-                .map(serde_json::Value::Number)
-                .unwrap_or(serde_json::Value::Null)
+                .map_or(serde_json::Value::Null, serde_json::Value::Number)
         }
         3 => {
-            let s_ptr = *(ptr.add(8) as *const *const u8);
+            let s_ptr = *ptr.add(8).cast::<*const u8>();
             let s = cstr_str(s_ptr);
             serde_json::Value::String(s.to_string())
         }
         4 => {
-            let list_ptr = *(ptr.add(8) as *const *mut OriList);
+            let list_ptr = *ptr.add(8).cast::<*mut OriList>();
             if list_ptr.is_null() {
                 serde_json::Value::Array(Vec::new())
             } else {
@@ -9509,7 +9503,7 @@ unsafe fn from_ori_json_value(ptr: *const u8) -> serde_json::Value {
             }
         }
         5 => {
-            let map_ptr = *(ptr.add(8) as *const *mut OriMap);
+            let map_ptr = *ptr.add(8).cast::<*mut OriMap>();
             if map_ptr.is_null() {
                 serde_json::Value::Object(serde_json::Map::new())
             } else {
@@ -9577,7 +9571,7 @@ unsafe fn new_optional_ptr(has_value: bool, payload: *mut u8) -> *mut u8 {
     }
     std::ptr::write_bytes(ptr, 0, total);
     *ptr = u8::from(has_value);
-    *(ptr.add(ptr_size) as *mut *mut u8) = payload;
+    *ptr.add(ptr_size).cast::<*mut u8>() = payload;
     // LANG-MEM-9: the wrapper owns its fresh managed payload via an edge
     // (it was stored as a raw pointer before — released wrappers left the
     // payload orphaned).
@@ -9601,7 +9595,7 @@ fn try_reserve_exact_or_abort<T>(vec: &mut Vec<T>, additional: usize, message: &
 fn checked_external_slice_len(len: i64, message: &str) -> usize {
     usize::try_from(len)
         .ok()
-        .filter(|length| *length <= isize::MAX as usize)
+        .filter(|length| isize::try_from(*length).is_ok())
         .unwrap_or_else(|| abort_bounds(message))
 }
 
@@ -9641,7 +9635,7 @@ fn format_float_fixed(value: f64, decimals: i64) -> String {
     format!("{value:.precision$}")
 }
 
-fn utc_parts_from_millis(millis: i64) -> (i64, u32, u32, u32, u32, u32) {
+const fn utc_parts_from_millis(millis: i64) -> (i64, u32, u32, u32, u32, u32) {
     let seconds = millis.div_euclid(1000);
     let days = seconds.div_euclid(86_400);
     let second_of_day = seconds.rem_euclid(86_400);
@@ -9652,7 +9646,7 @@ fn utc_parts_from_millis(millis: i64) -> (i64, u32, u32, u32, u32, u32) {
     (year, month, day, hour, minute, second)
 }
 
-fn civil_from_days(days_since_unix_epoch: i64) -> (i64, u32, u32) {
+const fn civil_from_days(days_since_unix_epoch: i64) -> (i64, u32, u32) {
     let z = days_since_unix_epoch + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 }.div_euclid(146_097);
     let doe = z - era * 146_097;
@@ -9687,7 +9681,7 @@ pub struct OriBytes {
 }
 
 unsafe fn alloc_optional_int(has_value: c_uchar, value: i64) -> *mut OriOptionalInt {
-    let ptr = ori_alloc(std::mem::size_of::<OriOptionalInt>(), None) as *mut OriOptionalInt;
+    let ptr = ori_alloc(std::mem::size_of::<OriOptionalInt>(), None).cast::<OriOptionalInt>();
     if !ptr.is_null() {
         (*ptr).has_value = has_value;
         (*ptr).value = value;
@@ -9701,7 +9695,7 @@ unsafe fn alloc_optional_owned_managed_value(
 ) -> *mut OriOptionalInt {
     let ptr = alloc_optional_managed(has_value, value);
     if has_value != 0 {
-        ori_arc_register_edge(ptr as *mut u8, value as *mut u8);
+        ori_arc_register_edge(ptr.cast::<u8>(), value as *mut u8);
         ori_arc_release(value as *mut u8);
     }
     ptr
@@ -9713,7 +9707,7 @@ unsafe fn alloc_optional_borrowed_managed_value(
 ) -> *mut OriOptionalInt {
     let ptr = alloc_optional_managed(has_value, value);
     if has_value != 0 {
-        ori_arc_register_edge(ptr as *mut u8, value as *mut u8);
+        ori_arc_register_edge(ptr.cast::<u8>(), value as *mut u8);
     }
     ptr
 }
@@ -9721,7 +9715,7 @@ unsafe fn alloc_optional_borrowed_managed_value(
 unsafe fn alloc_optional_managed(has_value: c_uchar, value: i64) -> *mut OriOptionalInt {
     // The registered ARC edge is the sole cascade owner of a managed payload.
     // A destructor must not release the same child again when the wrapper dies.
-    let ptr = ori_alloc(std::mem::size_of::<OriOptionalInt>(), None) as *mut OriOptionalInt;
+    let ptr = ori_alloc(std::mem::size_of::<OriOptionalInt>(), None).cast::<OriOptionalInt>();
     if !ptr.is_null() {
         (*ptr).has_value = has_value;
         (*ptr).value = value;
@@ -9730,7 +9724,7 @@ unsafe fn alloc_optional_managed(has_value: c_uchar, value: i64) -> *mut OriOpti
 }
 
 unsafe fn alloc_optional_float(has_value: c_uchar, value: f64) -> *mut OriOptionalFloat {
-    let ptr = ori_alloc(std::mem::size_of::<OriOptionalFloat>(), None) as *mut OriOptionalFloat;
+    let ptr = ori_alloc(std::mem::size_of::<OriOptionalFloat>(), None).cast::<OriOptionalFloat>();
     if !ptr.is_null() {
         (*ptr).has_value = has_value;
         (*ptr).value = value;
@@ -9744,7 +9738,7 @@ pub extern "C" fn ori_float_to_string(value: f64) -> *mut u8 {
 }
 
 #[no_mangle]
-pub extern "C" fn ori_to_float(value: i64) -> f64 {
+pub const extern "C" fn ori_to_float(value: i64) -> f64 {
     value as f64
 }
 
@@ -9805,7 +9799,7 @@ unsafe fn new_result(is_ok: bool, payload: *mut u8) -> *mut u8 {
     }
     std::ptr::write_bytes(ptr, 0, total);
     *ptr = u8::from(is_ok);
-    *(ptr.add(ptr_size) as *mut *mut u8) = payload;
+    *ptr.add(ptr_size).cast::<*mut u8>() = payload;
     wrapper_owns_payload(ptr, payload);
     ptr
 }
@@ -9824,7 +9818,7 @@ unsafe fn new_result_i64_ok(value: i64) -> *mut u8 {
     }
     std::ptr::write_bytes(ptr, 0, total);
     *ptr = 1;
-    std::ptr::write_unaligned(ptr.add(ptr_size) as *mut i64, value);
+    std::ptr::write_unaligned(ptr.add(ptr_size).cast::<i64>(), value);
     ptr
 }
 
@@ -9837,7 +9831,7 @@ unsafe fn new_result_f64_ok(value: f64) -> *mut u8 {
     }
     std::ptr::write_bytes(ptr, 0, total);
     *ptr = 1;
-    std::ptr::write_unaligned(ptr.add(ptr_size) as *mut f64, value);
+    std::ptr::write_unaligned(ptr.add(ptr_size).cast::<f64>(), value);
     ptr
 }
 
@@ -9888,7 +9882,7 @@ unsafe extern "C" fn ori_files_write_text(path: *const u8, content: *const u8) -
     let path_str = cstr_str(path);
     let content_str = cstr_str(content);
     match std::fs::write(path_str, content_str.as_bytes()) {
-        Ok(_) => new_result(true, cstring_from_str("")),
+        Ok(()) => new_result(true, cstring_from_str("")),
         Err(e) => new_result(false, cstring_from_str(&e.to_string())),
     }
 }
@@ -9906,7 +9900,7 @@ unsafe extern "C" fn ori_files_read_bytes(path: *const u8) -> *mut u8 {
 unsafe extern "C" fn ori_files_write_bytes(path: *const u8, content: *const u8) -> *mut u8 {
     let path_str = cstr_str(path);
     match std::fs::write(path_str, bytes_payload(content)) {
-        Ok(_) => new_result(true, cstring_from_str("")),
+        Ok(()) => new_result(true, cstring_from_str("")),
         Err(e) => new_result(false, cstring_from_str(&e.to_string())),
     }
 }
@@ -9934,7 +9928,7 @@ unsafe extern "C" fn ori_files_write_text_async(
     let content_str = cstr_str(content).to_string();
     spawn_io_result_future(
         move || match std::fs::write(path_str, content_str.as_bytes()) {
-            Ok(_) => unsafe { new_result(true, cstring_from_str("")) },
+            Ok(()) => unsafe { new_result(true, cstring_from_str("")) },
             Err(error) => unsafe { new_result(false, cstring_from_str(&error.to_string())) },
         },
     )
@@ -9985,7 +9979,7 @@ unsafe extern "C" fn ori_files_list_dir(path: *const u8) -> *mut u8 {
                 let name = entry.file_name().to_string_lossy().into_owned();
                 ori_list_push_owned_managed(list, cstring_from_str(&name));
             }
-            new_result(true, list as *mut u8)
+            new_result(true, list.cast::<u8>())
         }
         Err(e) => new_result(false, cstring_from_str(&e.to_string())),
     }
@@ -10031,7 +10025,7 @@ struct RuntimeFile {
 
 unsafe extern "C" fn ori_files_destructor(ptr: *mut u8) {
     if !ptr.is_null() {
-        std::ptr::drop_in_place(ptr as *mut RuntimeFile);
+        std::ptr::drop_in_place(ptr.cast::<RuntimeFile>());
     }
 }
 
@@ -10041,12 +10035,12 @@ unsafe extern "C" fn ori_files_open_read(path: *const u8) -> *mut u8 {
     match std::fs::File::open(path_str) {
         Ok(file) => {
             let layout_size = std::mem::size_of::<RuntimeFile>();
-            let payload = ori_alloc(layout_size, Some(ori_files_destructor)) as *mut RuntimeFile;
+            let payload = ori_alloc(layout_size, Some(ori_files_destructor)).cast::<RuntimeFile>();
             if payload.is_null() {
                 return std::ptr::null_mut();
             }
             std::ptr::write(payload, RuntimeFile { file: Some(file) });
-            new_result(true, payload as *mut u8)
+            new_result(true, payload.cast::<u8>())
         }
         Err(e) => new_result(false, cstring_from_str(&e.to_string())),
     }
@@ -10058,12 +10052,12 @@ unsafe extern "C" fn ori_files_open_write(path: *const u8) -> *mut u8 {
     match std::fs::File::create(path_str) {
         Ok(file) => {
             let layout_size = std::mem::size_of::<RuntimeFile>();
-            let payload = ori_alloc(layout_size, Some(ori_files_destructor)) as *mut RuntimeFile;
+            let payload = ori_alloc(layout_size, Some(ori_files_destructor)).cast::<RuntimeFile>();
             if payload.is_null() {
                 return std::ptr::null_mut();
             }
             std::ptr::write(payload, RuntimeFile { file: Some(file) });
-            new_result(true, payload as *mut u8)
+            new_result(true, payload.cast::<u8>())
         }
         Err(e) => new_result(false, cstring_from_str(&e.to_string())),
     }
@@ -10077,7 +10071,7 @@ unsafe extern "C" fn ori_files_read(file_ptr: *mut u8, bytes_count: i64) -> *mut
     if bytes_count < 0 {
         return new_result(false, cstring_from_str("Invalid byte count"));
     }
-    let runtime_file = &mut *(file_ptr as *mut RuntimeFile);
+    let runtime_file = &mut *file_ptr.cast::<RuntimeFile>();
     let Some(ref mut file) = runtime_file.file else {
         return new_result(false, cstring_from_str("File is closed"));
     };
@@ -10105,7 +10099,7 @@ unsafe extern "C" fn ori_files_write(file_ptr: *mut u8, data: *const u8) -> *mut
     if file_ptr.is_null() {
         return new_result(false, cstring_from_str("Invalid file handle"));
     }
-    let runtime_file = &mut *(file_ptr as *mut RuntimeFile);
+    let runtime_file = &mut *file_ptr.cast::<RuntimeFile>();
     let Some(ref mut file) = runtime_file.file else {
         return new_result(false, cstring_from_str("File is closed"));
     };
@@ -10122,7 +10116,7 @@ unsafe extern "C" fn ori_files_close(file_ptr: *mut u8) {
     if file_ptr.is_null() {
         return;
     }
-    let runtime_file = &mut *(file_ptr as *mut RuntimeFile);
+    let runtime_file = &mut *file_ptr.cast::<RuntimeFile>();
     runtime_file.file = None;
 }
 
@@ -10160,7 +10154,7 @@ unsafe extern "C" fn ori_bytes_copy_parts(parts: *const u8) -> *mut u8 {
     if parts.is_null() {
         return cstring_from_bytes(Vec::new());
     }
-    let view = &*(parts as *const OriBytes);
+    let view = &*parts.cast::<OriBytes>();
     let data = view.data;
     let len = view.len;
     if len < 0 {
@@ -10174,7 +10168,7 @@ unsafe extern "C" fn ori_bytes_copy_parts(parts: *const u8) -> *mut u8 {
     }
     let len = usize::try_from(len)
         .ok()
-        .filter(|length| *length <= isize::MAX as usize)
+        .filter(|length| isize::try_from(*length).is_ok())
         .unwrap_or_else(|| abort_bounds("ori bytes input length is too large"));
     let bytes = std::slice::from_raw_parts(data, len);
     cstring_from_slices(&[bytes])
@@ -10208,7 +10202,7 @@ unsafe extern "C" fn ori_bytes_to_hex(ptr: *const u8) -> *mut u8 {
     }
     for &b in bytes {
         use std::fmt::Write;
-        let _ = write!(&mut hex, "{:02x}", b);
+        let _ = write!(&mut hex, "{b:02x}");
     }
     cstring_from_str(&hex)
 }
@@ -10291,7 +10285,7 @@ unsafe extern "C" fn ori_string_to_bytes(ptr: *const u8) -> *mut u8 {
         // an exact length contract, so never alias that pointer or infer its
         // ownership from an integer-shaped ABI value; copy the UTF-8 payload
         // into a managed allocation instead.
-        CStr::from_ptr(ptr as *const c_char).to_bytes().to_vec()
+        CStr::from_ptr(ptr.cast::<c_char>()).to_bytes().to_vec()
     };
     cstring_from_bytes(bytes)
 }
@@ -10344,9 +10338,9 @@ pub struct OriDequeIterator {
 }
 
 unsafe extern "C" fn ori_deque_iterator_dtor(ptr: *mut u8) {
-    let iter = ptr as *mut OriDequeIterator;
+    let iter = ptr.cast::<OriDequeIterator>();
     if !iter.is_null() {
-        ori_arc_release((*iter).deque as *mut u8);
+        ori_arc_release((*iter).deque.cast::<u8>());
     }
 }
 
@@ -10358,9 +10352,10 @@ unsafe extern "C" fn ori_deque_iterator_new(deque: *mut OriDeque) -> *mut OriDeq
     let iter = ori_alloc(
         std::mem::size_of::<OriDequeIterator>(),
         Some(ori_deque_iterator_dtor),
-    ) as *mut OriDequeIterator;
+    )
+    .cast::<OriDequeIterator>();
     if !iter.is_null() {
-        ori_arc_retain(deque as *mut u8);
+        ori_arc_retain(deque.cast::<u8>());
         (*iter).deque = deque;
         (*iter).expected_version = (*deque).version;
         (*iter).index = 0;
@@ -10388,7 +10383,7 @@ unsafe extern "C" fn ori_deque_iterator_next(iter: *mut OriDequeIterator) -> *mu
         .unwrap_or(0);
     (*iter).last_value = val;
     (*iter).index += 1;
-    &mut (*iter).last_value
+    &raw mut (*iter).last_value
 }
 
 #[no_mangle]
@@ -10442,9 +10437,9 @@ pub struct OriHeapIterator {
 }
 
 unsafe extern "C" fn ori_heap_iterator_dtor(ptr: *mut u8) {
-    let iter = ptr as *mut OriHeapIterator;
+    let iter = ptr.cast::<OriHeapIterator>();
     if !iter.is_null() {
-        ori_arc_release((*iter).heap as *mut u8);
+        ori_arc_release((*iter).heap.cast::<u8>());
     }
 }
 
@@ -10456,9 +10451,10 @@ unsafe extern "C" fn ori_heap_iterator_new(heap: *mut OriHeap) -> *mut OriHeapIt
     let iter = ori_alloc(
         std::mem::size_of::<OriHeapIterator>(),
         Some(ori_heap_iterator_dtor),
-    ) as *mut OriHeapIterator;
+    )
+    .cast::<OriHeapIterator>();
     if !iter.is_null() {
-        ori_arc_retain(heap as *mut u8);
+        ori_arc_retain(heap.cast::<u8>());
         (*iter).heap = heap;
         (*iter).expected_version = (*heap).version;
         (*iter).index = 0;
@@ -10482,7 +10478,7 @@ unsafe extern "C" fn ori_heap_iterator_next(iter: *mut OriHeapIterator) -> *mut 
     let val = *(*heap).data.add((*iter).index as usize);
     (*iter).last_value = val;
     (*iter).index += 1;
-    &mut (*iter).last_value
+    &raw mut (*iter).last_value
 }
 
 #[repr(C)]
@@ -10494,9 +10490,9 @@ pub struct OriGraphIterator {
 }
 
 unsafe extern "C" fn ori_graph_iterator_dtor(ptr: *mut u8) {
-    let iter = ptr as *mut OriGraphIterator;
+    let iter = ptr.cast::<OriGraphIterator>();
     if !iter.is_null() {
-        ori_arc_release((*iter).graph as *mut u8);
+        ori_arc_release((*iter).graph.cast::<u8>());
     }
 }
 
@@ -10508,9 +10504,10 @@ unsafe extern "C" fn ori_graph_iterator_new(graph: *mut OriGraph) -> *mut OriGra
     let iter = ori_alloc(
         std::mem::size_of::<OriGraphIterator>(),
         Some(ori_graph_iterator_dtor),
-    ) as *mut OriGraphIterator;
+    )
+    .cast::<OriGraphIterator>();
     if !iter.is_null() {
-        ori_arc_retain(graph as *mut u8);
+        ori_arc_retain(graph.cast::<u8>());
         (*iter).graph = graph;
         (*iter).expected_version = (*graph).version;
         (*iter).index = 0;
@@ -10534,7 +10531,7 @@ unsafe extern "C" fn ori_graph_iterator_next(iter: *mut OriGraphIterator) -> *mu
     let val = *(*graph).nodes.add((*iter).index as usize);
     (*iter).last_value = val;
     (*iter).index += 1;
-    &mut (*iter).last_value
+    &raw mut (*iter).last_value
 }
 
 // ── Stdlib parity extensions (gap closure) ─────────────────────────────────
@@ -10554,38 +10551,38 @@ impl ConnectionTransport {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         use std::io::Read;
         match self {
-            ConnectionTransport::Plain(stream) => stream.read(buf),
-            ConnectionTransport::Tls(stream) => stream.read(buf),
+            Self::Plain(stream) => stream.read(buf),
+            Self::Tls(stream) => stream.read(buf),
         }
     }
 
     fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
         use std::io::Write;
         match self {
-            ConnectionTransport::Plain(stream) => stream.write_all(buf),
-            ConnectionTransport::Tls(stream) => stream.write_all(buf),
+            Self::Plain(stream) => stream.write_all(buf),
+            Self::Tls(stream) => stream.write_all(buf),
         }
     }
 
     fn shutdown(&self, how: std::net::Shutdown) -> std::io::Result<()> {
         match self {
-            ConnectionTransport::Plain(stream) => stream.shutdown(how),
-            ConnectionTransport::Tls(stream) => stream.get_ref().shutdown(how),
+            Self::Plain(stream) => stream.shutdown(how),
+            Self::Tls(stream) => stream.get_ref().shutdown(how),
         }
     }
 
     /// B7: socket read deadline. `None` clears the timeout (blocking).
     fn set_read_timeout(&self, timeout: Option<std::time::Duration>) -> std::io::Result<()> {
         match self {
-            ConnectionTransport::Plain(stream) => stream.set_read_timeout(timeout),
-            ConnectionTransport::Tls(stream) => stream.get_ref().set_read_timeout(timeout),
+            Self::Plain(stream) => stream.set_read_timeout(timeout),
+            Self::Tls(stream) => stream.get_ref().set_read_timeout(timeout),
         }
     }
 
     fn set_write_timeout(&self, timeout: Option<std::time::Duration>) -> std::io::Result<()> {
         match self {
-            ConnectionTransport::Plain(stream) => stream.set_write_timeout(timeout),
-            ConnectionTransport::Tls(stream) => stream.get_ref().set_write_timeout(timeout),
+            Self::Plain(stream) => stream.set_write_timeout(timeout),
+            Self::Tls(stream) => stream.get_ref().set_write_timeout(timeout),
         }
     }
 }
@@ -10602,19 +10599,19 @@ struct RuntimeUdpSocket {
 
 unsafe extern "C" fn ori_net_destructor(ptr: *mut u8) {
     if !ptr.is_null() {
-        std::ptr::drop_in_place(ptr as *mut RuntimeConnection);
+        std::ptr::drop_in_place(ptr.cast::<RuntimeConnection>());
     }
 }
 
 unsafe extern "C" fn ori_net_listener_destructor(ptr: *mut u8) {
     if !ptr.is_null() {
-        std::ptr::drop_in_place(ptr as *mut RuntimeListener);
+        std::ptr::drop_in_place(ptr.cast::<RuntimeListener>());
     }
 }
 
 unsafe extern "C" fn ori_net_udp_destructor(ptr: *mut u8) {
     if !ptr.is_null() {
-        std::ptr::drop_in_place(ptr as *mut RuntimeUdpSocket);
+        std::ptr::drop_in_place(ptr.cast::<RuntimeUdpSocket>());
     }
 }
 
@@ -10641,7 +10638,7 @@ fn tcp_connect(address: &str, timeout_ms: i64) -> Result<std::net::TcpStream, St
 fn alloc_runtime_connection(stream: ConnectionTransport) -> Result<*mut u8, String> {
     let layout_size = std::mem::size_of::<RuntimeConnection>();
     let payload =
-        unsafe { ori_alloc(layout_size, Some(ori_net_destructor)) as *mut RuntimeConnection };
+        unsafe { ori_alloc(layout_size, Some(ori_net_destructor)).cast::<RuntimeConnection>() };
     if payload.is_null() {
         return Err("allocation failed".to_string());
     }
@@ -10653,7 +10650,7 @@ fn alloc_runtime_connection(stream: ConnectionTransport) -> Result<*mut u8, Stri
             },
         );
     }
-    Ok(payload as *mut u8)
+    Ok(payload.cast::<u8>())
 }
 
 fn ensure_rustls_crypto_provider() {
@@ -10720,9 +10717,9 @@ unsafe extern "C" fn ori_files_created_at(path: *const u8) -> *mut u8 {
                         .duration_since(UNIX_EPOCH)
                         .unwrap_or(Duration::ZERO)
                         .as_millis() as i64;
-                    alloc_optional_int(1, millis) as *mut u8
+                    alloc_optional_int(1, millis).cast::<u8>()
                 }
-                Err(_) => alloc_optional_int(0, 0) as *mut u8,
+                Err(_) => alloc_optional_int(0, 0).cast::<u8>(),
             };
             new_result(true, optional)
         }
@@ -10797,7 +10794,7 @@ unsafe extern "C" fn ori_process_run(program: *const u8, args: *mut OriList) -> 
         }
     }
     match command.status() {
-        Ok(status) => new_result_i64_ok(status.code().unwrap_or(-1) as i64),
+        Ok(status) => new_result_i64_ok(i64::from(status.code().unwrap_or(-1))),
         Err(e) => new_result(false, cstring_from_str(&e.to_string())),
     }
 }
@@ -10834,7 +10831,7 @@ unsafe extern "C" fn ori_process_run_capture(program: *const u8, args: *mut OriL
             ori_arc_release(status_val);
             ori_arc_release(stdout_val);
             ori_arc_release(stderr_val);
-            new_result(true, map as *mut u8)
+            new_result(true, map.cast::<u8>())
         }
         Err(e) => new_result(false, cstring_from_str(&e.to_string())),
     }
@@ -10853,18 +10850,18 @@ unsafe extern "C" fn ori_process_run_output(program: *const u8, args: *mut OriLi
     }
     match command.output() {
         Ok(output) => {
-            let status = output.status.code().unwrap_or(-1) as i64;
+            let status = i64::from(output.status.code().unwrap_or(-1));
             let stdout_bytes = cstring_from_bytes(output.stdout);
             let stderr_bytes = cstring_from_bytes(output.stderr);
-            let tuple = ori_alloc(24, None) as *mut i64;
+            let tuple = ori_alloc(24, None).cast::<i64>();
             *tuple = status;
             *tuple.add(1) = stdout_bytes as i64;
             *tuple.add(2) = stderr_bytes as i64;
-            ori_arc_register_edge(tuple as *mut u8, stdout_bytes);
-            ori_arc_register_edge(tuple as *mut u8, stderr_bytes);
+            ori_arc_register_edge(tuple.cast::<u8>(), stdout_bytes);
+            ori_arc_register_edge(tuple.cast::<u8>(), stderr_bytes);
             ori_arc_release(stdout_bytes);
             ori_arc_release(stderr_bytes);
-            new_result(true, tuple as *mut u8)
+            new_result(true, tuple.cast::<u8>())
         }
         Err(e) => new_result(false, cstring_from_str(&e.to_string())),
     }
@@ -10894,7 +10891,7 @@ unsafe extern "C" fn ori_net_connect_async(
 ) -> *mut OriFuture {
     let host_str = cstr_str(host).to_string();
     spawn_io_result_future(move || match std::ffi::CString::new(host_str) {
-        Ok(c_host) => ori_net_connect(c_host.as_ptr() as *const u8, port, timeout_ms),
+        Ok(c_host) => ori_net_connect(c_host.as_ptr().cast::<u8>(), port, timeout_ms),
         Err(_) => new_result(false, cstring_from_str("invalid host string")),
     })
 }
@@ -10909,7 +10906,7 @@ unsafe extern "C" fn ori_net_connect_tls_async(
     // TLS handshake stays on the shared I/O pool (blocking path); still does not
     // block the Ori async executor.
     spawn_io_result_future(move || match std::ffi::CString::new(host_str) {
-        Ok(c_host) => ori_net_connect_tls(c_host.as_ptr() as *const u8, port, timeout_ms),
+        Ok(c_host) => ori_net_connect_tls(c_host.as_ptr().cast::<u8>(), port, timeout_ms),
         Err(_) => new_result(false, cstring_from_str("invalid host string")),
     })
 }
@@ -11173,7 +11170,7 @@ fn poll_fd_ready(
             events,
             revents: 0,
         };
-        let rc = unsafe { libc::poll(&mut pfd, 1, 50) };
+        let rc = unsafe { libc::poll(&raw mut pfd, 1, 50) };
         rc < 0
             || (rc > 0
                 && (pfd.revents & (events | libc::POLLERR | libc::POLLHUP | libc::POLLNVAL)) != 0)
@@ -11193,7 +11190,7 @@ unsafe fn connection_readiness_handle(conn: *mut u8) -> Option<IoReadinessHandle
     #[cfg(unix)]
     {
         use std::os::fd::AsFd;
-        let connection = &*(conn as *mut RuntimeConnection);
+        let connection = &*conn.cast::<RuntimeConnection>();
         let stream = connection.stream.lock().ok()?;
         match stream.as_ref()? {
             ConnectionTransport::Plain(stream) => stream.as_fd().try_clone_to_owned().ok(),
@@ -11214,7 +11211,7 @@ unsafe fn listener_readiness_handle(listener_ptr: *mut u8) -> Option<IoReadiness
     #[cfg(unix)]
     {
         use std::os::fd::AsFd;
-        let listener = &*(listener_ptr as *mut RuntimeListener);
+        let listener = &*listener_ptr.cast::<RuntimeListener>();
         let value = listener.listener.lock().ok()?;
         value.as_ref()?.as_fd().try_clone_to_owned().ok()
     }
@@ -11232,7 +11229,7 @@ unsafe fn udp_readiness_handle(sock_ptr: *mut u8) -> Option<IoReadinessHandle> {
     #[cfg(unix)]
     {
         use std::os::fd::AsFd;
-        let socket = &*(sock_ptr as *mut RuntimeUdpSocket);
+        let socket = &*sock_ptr.cast::<RuntimeUdpSocket>();
         let value = socket.socket.lock().ok()?;
         value.as_ref()?.as_fd().try_clone_to_owned().ok()
     }
@@ -11259,7 +11256,7 @@ unsafe fn spawn_readiness_io_future(
         schedule_future_waiters(waiters);
         return future;
     }
-    ori_arc_retain(future as *mut u8);
+    ori_arc_retain(future.cast::<u8>());
     let reactor = io_reactor();
     {
         let mut jobs = lock_io_jobs(reactor);
@@ -11296,7 +11293,7 @@ unsafe fn spawn_io_result_future(
         schedule_future_waiters(waiters);
         return future;
     }
-    ori_arc_retain(future as *mut u8);
+    ori_arc_retain(future.cast::<u8>());
     let future_addr = future as usize;
     let pool = io_pool();
     let mut state = match pool.state.lock() {
@@ -11370,7 +11367,7 @@ unsafe extern "C" fn ori_net_listen(host: *const u8, port: i64) -> *mut u8 {
         Ok(listener) => {
             let layout_size = std::mem::size_of::<RuntimeListener>();
             let payload =
-                ori_alloc(layout_size, Some(ori_net_listener_destructor)) as *mut RuntimeListener;
+                ori_alloc(layout_size, Some(ori_net_listener_destructor)).cast::<RuntimeListener>();
             if payload.is_null() {
                 return new_result(false, cstring_from_str("allocation failed"));
             }
@@ -11380,7 +11377,7 @@ unsafe extern "C" fn ori_net_listen(host: *const u8, port: i64) -> *mut u8 {
                     listener: Mutex::new(Some(listener)),
                 },
             );
-            new_result(true, payload as *mut u8)
+            new_result(true, payload.cast::<u8>())
         }
         Err(e) => new_result(false, cstring_from_str(&e.to_string())),
     }
@@ -11391,7 +11388,7 @@ unsafe extern "C" fn ori_net_accept(listener_ptr: *mut u8) -> *mut u8 {
     if listener_ptr.is_null() {
         return new_result(false, cstring_from_str("invalid listener"));
     }
-    let listener = &*(listener_ptr as *mut RuntimeListener);
+    let listener = &*listener_ptr.cast::<RuntimeListener>();
     let guard = match listener.listener.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
@@ -11413,7 +11410,7 @@ unsafe extern "C" fn ori_net_close_listener(listener_ptr: *mut u8) {
     if listener_ptr.is_null() {
         return;
     }
-    let listener = &*(listener_ptr as *mut RuntimeListener);
+    let listener = &*listener_ptr.cast::<RuntimeListener>();
     let mut guard = match listener.listener.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
@@ -11428,7 +11425,7 @@ unsafe extern "C" fn ori_net_listener_port(listener_ptr: *mut u8) -> i64 {
     if listener_ptr.is_null() {
         return -1;
     }
-    let listener = &*(listener_ptr as *mut RuntimeListener);
+    let listener = &*listener_ptr.cast::<RuntimeListener>();
     let guard = match listener.listener.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
@@ -11436,8 +11433,7 @@ unsafe extern "C" fn ori_net_listener_port(listener_ptr: *mut u8) -> i64 {
     guard
         .as_ref()
         .and_then(|l| l.local_addr().ok())
-        .map(|addr| addr.port() as i64)
-        .unwrap_or(-1)
+        .map_or(-1, |addr| i64::from(addr.port()))
 }
 
 #[no_mangle]
@@ -11448,7 +11444,7 @@ unsafe extern "C" fn ori_net_udp_bind(host: *const u8, port: i64) -> *mut u8 {
         Ok(socket) => {
             let layout_size = std::mem::size_of::<RuntimeUdpSocket>();
             let payload =
-                ori_alloc(layout_size, Some(ori_net_udp_destructor)) as *mut RuntimeUdpSocket;
+                ori_alloc(layout_size, Some(ori_net_udp_destructor)).cast::<RuntimeUdpSocket>();
             if payload.is_null() {
                 return new_result(false, cstring_from_str("allocation failed"));
             }
@@ -11458,7 +11454,7 @@ unsafe extern "C" fn ori_net_udp_bind(host: *const u8, port: i64) -> *mut u8 {
                     socket: Mutex::new(Some(socket)),
                 },
             );
-            new_result(true, payload as *mut u8)
+            new_result(true, payload.cast::<u8>())
         }
         Err(e) => new_result(false, cstring_from_str(&e.to_string())),
     }
@@ -11484,7 +11480,7 @@ unsafe fn send_udp_bytes(sock_ptr: *mut u8, host: &str, port: i64, bytes: &[u8])
     if sock_ptr.is_null() {
         return new_result(false, cstring_from_str("invalid UDP socket"));
     }
-    let socket = &*(sock_ptr as *mut RuntimeUdpSocket);
+    let socket = &*sock_ptr.cast::<RuntimeUdpSocket>();
     let guard = match socket.socket.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
@@ -11508,7 +11504,7 @@ unsafe extern "C" fn ori_net_udp_recv_from(sock_ptr: *mut u8, max_bytes: i64) ->
     if sock_ptr.is_null() {
         return new_result(false, cstring_from_str("invalid UDP socket"));
     }
-    let socket = &*(sock_ptr as *mut RuntimeUdpSocket);
+    let socket = &*sock_ptr.cast::<RuntimeUdpSocket>();
     let guard = match socket.socket.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
@@ -11532,7 +11528,7 @@ unsafe extern "C" fn ori_net_udp_close(sock_ptr: *mut u8) {
     if sock_ptr.is_null() {
         return;
     }
-    let socket = &*(sock_ptr as *mut RuntimeUdpSocket);
+    let socket = &*sock_ptr.cast::<RuntimeUdpSocket>();
     let mut guard = match socket.socket.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
@@ -11547,7 +11543,7 @@ unsafe extern "C" fn ori_net_udp_local_port(sock_ptr: *mut u8) -> i64 {
     if sock_ptr.is_null() {
         return -1;
     }
-    let socket = &*(sock_ptr as *mut RuntimeUdpSocket);
+    let socket = &*sock_ptr.cast::<RuntimeUdpSocket>();
     let guard = match socket.socket.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
@@ -11555,8 +11551,7 @@ unsafe extern "C" fn ori_net_udp_local_port(sock_ptr: *mut u8) -> i64 {
     guard
         .as_ref()
         .and_then(|s| s.local_addr().ok())
-        .map(|addr| addr.port() as i64)
-        .unwrap_or(-1)
+        .map_or(-1, |addr| i64::from(addr.port()))
 }
 
 /// Set TCP read timeout in milliseconds. `timeout_ms <= 0` clears the deadline.
@@ -11566,7 +11561,7 @@ unsafe extern "C" fn ori_net_set_read_timeout_ms(conn: *mut u8, timeout_ms: i64)
     if conn.is_null() {
         return new_result(false, cstring_from_str("invalid connection"));
     }
-    let connection = &*(conn as *mut RuntimeConnection);
+    let connection = &*conn.cast::<RuntimeConnection>();
     let guard = match connection.stream.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
@@ -11591,7 +11586,7 @@ unsafe extern "C" fn ori_net_set_write_timeout_ms(conn: *mut u8, timeout_ms: i64
     if conn.is_null() {
         return new_result(false, cstring_from_str("invalid connection"));
     }
-    let connection = &*(conn as *mut RuntimeConnection);
+    let connection = &*conn.cast::<RuntimeConnection>();
     let guard = match connection.stream.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
@@ -11615,7 +11610,7 @@ unsafe extern "C" fn ori_net_read_some(conn: *mut u8, max_bytes: i64) -> *mut u8
     if conn.is_null() {
         return new_result(false, cstring_from_str("invalid connection"));
     }
-    let connection = &*(conn as *mut RuntimeConnection);
+    let connection = &*conn.cast::<RuntimeConnection>();
     let mut guard = match connection.stream.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
@@ -11642,7 +11637,7 @@ unsafe extern "C" fn ori_net_write_all(conn: *mut u8, data: *const u8) -> *mut u
     if conn.is_null() {
         return new_result(false, cstring_from_str("invalid connection"));
     }
-    let connection = &*(conn as *mut RuntimeConnection);
+    let connection = &*conn.cast::<RuntimeConnection>();
     let mut guard = match connection.stream.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
@@ -11662,7 +11657,7 @@ unsafe extern "C" fn ori_net_close(conn: *mut u8) {
     if conn.is_null() {
         return;
     }
-    let connection = &*(conn as *mut RuntimeConnection);
+    let connection = &*conn.cast::<RuntimeConnection>();
     let mut guard = match connection.stream.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
@@ -11679,7 +11674,7 @@ unsafe extern "C" fn ori_net_is_closed(conn: *mut u8) -> c_uchar {
     if conn.is_null() {
         return 1;
     }
-    let connection = &*(conn as *mut RuntimeConnection);
+    let connection = &*conn.cast::<RuntimeConnection>();
     let guard = match connection.stream.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
@@ -11703,7 +11698,7 @@ unsafe extern "C" fn ori_handle_is_null(handle: *mut u8) -> c_uchar {
 /// handles use the same pointer representation in the native ABI. The value
 /// carries no ownership and must not be dereferenced or retained.
 #[no_mangle]
-unsafe extern "C" fn ori_handle_null() -> *mut u8 {
+const unsafe extern "C" fn ori_handle_null() -> *mut u8 {
     std::ptr::null_mut()
 }
 
@@ -11713,12 +11708,12 @@ unsafe extern "C" fn ori_mem_string_as_ptr(ptr: *const u8) -> i64 {
 }
 
 #[no_mangle]
-unsafe extern "C" fn ori_mem_string_len(ptr: *const u8) -> i64 {
+const unsafe extern "C" fn ori_mem_string_len(ptr: *const u8) -> i64 {
     cstr_byte_len(ptr) as i64
 }
 
 #[no_mangle]
-pub extern "C" fn ori_math_trunc(x: f64) -> f64 {
+pub const extern "C" fn ori_math_trunc(x: f64) -> f64 {
     x.trunc()
 }
 

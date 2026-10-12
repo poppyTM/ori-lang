@@ -124,10 +124,10 @@ pub fn run_test_with_options(path: &Path, options: TestOptions) -> Result<TestOu
         check_loaded_sources(&loaded, &resolved, &mut sink);
     }
 
-    let tests = if !sink.has_errors() {
-        collect_test_cases(&loaded, &resolved, &mut sink)
-    } else {
+    let tests = if sink.has_errors() {
         Vec::new()
+    } else {
+        collect_test_cases(&loaded, &resolved, &mut sink)
     };
     let discovered = tests.len();
     let selected_tests = filter_test_cases(tests, filter.as_deref());
@@ -339,7 +339,9 @@ pub fn lower_jit_source_with_options(
         check_loaded_sources(&loaded, &resolved, &mut sink);
     }
 
-    let (hir, cdylib, native_libs) = if !sink.has_errors() {
+    let (hir, cdylib, native_libs) = if sink.has_errors() {
+        (None, None, Vec::new())
+    } else {
         let mut hir = lower_loaded_sources(&loaded, &resolved, &mut sink);
         if sink.has_errors() {
             (None, None, Vec::new())
@@ -359,8 +361,6 @@ pub fn lower_jit_source_with_options(
                 .collect::<Vec<_>>();
             (Some(hir), Some(cdylib), native_libs)
         }
-    } else {
-        (None, None, Vec::new())
     };
 
     let has_errors = sink.has_errors();
@@ -409,7 +409,7 @@ pub(super) fn run_native_tests(
                 passed: false,
                 skipped: false,
                 stdout: String::new(),
-                stderr: error.to_string(),
+                stderr: error.clone(),
                 status: Some(1),
             })
             .collect());
@@ -537,7 +537,7 @@ fn test_call(test: &TestCase, span: ori_diagnostics::Span) -> HirExpr {
                 callee: Box::new(HirExpr {
                     kind: HirExprKind::Var("ori_task_block_on".into()),
                     ty: Ty::Func {
-                        params: vec![test_ret_ty.clone()],
+                        params: vec![test_ret_ty],
                         ret: Box::new(Ty::Void),
                     },
                     span,

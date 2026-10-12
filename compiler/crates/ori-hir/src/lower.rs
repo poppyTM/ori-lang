@@ -1,4 +1,9 @@
-use crate::hir::*;
+use crate::hir::{
+    HirArg, HirArm, HirBlock, HirClosureCapture, HirConst, HirEnum, HirExpr, HirExprArm,
+    HirExprKind, HirExtern, HirField, HirFunc, HirLValue, HirListElement, HirModule, HirParam,
+    HirPattern, HirStmt, HirStrPart, HirStruct, HirTrait, HirTraitImpl, HirTraitImplMethod,
+    HirTraitMethod, HirVariant,
+};
 use ori_ast::common::{Attr, AttrArg, Name, Visibility};
 use ori_ast::expr::{Arg, BinaryOp, ClosureBody, ClosureExpr, Expr, FStrPart, UnaryOp};
 use ori_ast::item::{Item, SourceFile};
@@ -70,7 +75,7 @@ fn ori_mem_size_of_ty(ty: &Ty) -> i64 {
             Ty::ConstInt(_, n) if *n >= 0 => ori_mem_size_of_ty(elem) * n,
             _ => 0,
         },
-        Ty::Simd(elem, lanes) => ori_mem_size_of_ty(elem) * (*lanes as i64),
+        Ty::Simd(elem, lanes) => ori_mem_size_of_ty(elem) * i64::from(*lanes),
         Ty::Error => 0,
         Ty::Infer(_) | Ty::Param { .. } => 8,
         // A slice is a small `(owner, start, len)` block behind a pointer.
@@ -473,8 +478,7 @@ fn specialized_stdlib_call_ret_ty(c_name: &str, args: &[HirArg], fallback: Ty) -
     let canonical = ori_types::stdlib::stdlib_runtime_functions()
         .iter()
         .find(|entry| entry.runtime_symbol == c_name)
-        .map(|entry| entry.canonical_path)
-        .unwrap_or(c_name);
+        .map_or(c_name, |entry| entry.canonical_path);
     let list_elem = |arg: &HirArg| match &arg.value.ty {
         Ty::List(elem) => Some(*elem.clone()),
         ty => ty.list_backed_collection_elem().cloned(),
@@ -1070,7 +1074,7 @@ impl<'a> Lowerer<'a> {
                 Ty::ConstInt(_, n) if *n >= 0 => self.size_of_ty(elem) * n,
                 _ => 0,
             },
-            Ty::Simd(elem, lanes) => self.size_of_ty(elem) * (*lanes as i64),
+            Ty::Simd(elem, lanes) => self.size_of_ty(elem) * i64::from(*lanes),
             Ty::Named(def_id, args) => {
                 let Some(sig) = self.struct_sigs.iter().find(|sig| sig.def_id == *def_id) else {
                     return 8;
@@ -1083,8 +1087,7 @@ impl<'a> Lowerer<'a> {
                 let mut max_align: i64 = self
                     .struct_explicit_aligns
                     .get(def_id)
-                    .map(|&a| a as i64)
-                    .unwrap_or(1);
+                    .map_or(1, |&a| i64::from(a));
                 for (_, field_ty) in &sig.fields {
                     let substituted = substitute_ty_params(field_ty, args);
                     let size = self.size_of_ty(&substituted);
@@ -1106,7 +1109,7 @@ impl<'a> Lowerer<'a> {
     fn align_of_ty(&self, ty: &Ty) -> i64 {
         match ty {
             Ty::Array(elem, _) => self.align_of_ty(elem),
-            Ty::Simd(elem, lanes) => (self.size_of_ty(elem) * (*lanes as i64))
+            Ty::Simd(elem, lanes) => (self.size_of_ty(elem) * i64::from(*lanes))
                 .min(16)
                 .max(self.align_of_ty(elem)),
             Ty::Named(def_id, args) => {
@@ -1126,7 +1129,7 @@ impl<'a> Lowerer<'a> {
                     .max()
                     .unwrap_or(1);
                 if let Some(&explicit) = self.struct_explicit_aligns.get(def_id) {
-                    base_align.max(explicit as i64)
+                    base_align.max(i64::from(explicit))
                 } else {
                     base_align
                 }
@@ -1294,7 +1297,7 @@ impl<'a> Lowerer<'a> {
                 if suffix.is_empty() {
                     return SmolStr::new(full_ns.to_string());
                 }
-                return SmolStr::new(format!("{}{}", full_ns, suffix));
+                return SmolStr::new(format!("{full_ns}{suffix}"));
             }
             if let Some(dot) = name[..prefix_end].rfind('.') {
                 prefix_end = dot;
@@ -1339,8 +1342,7 @@ impl<'a> Lowerer<'a> {
     /// no signature is registered (generic instantiation fills it in later).
     fn func_return_ty(&self, def_id: ori_types::DefId) -> Ty {
         self.func_sig(def_id)
-            .map(|sig| sig.return_ty.clone())
-            .unwrap_or(Ty::Infer(0))
+            .map_or(Ty::Infer(0), |sig| sig.return_ty.clone())
     }
 
     fn func_sig(&self, def_id: DefId) -> Option<&FuncSig> {
@@ -1367,8 +1369,7 @@ impl<'a> Lowerer<'a> {
                     .value_sigs
                     .iter()
                     .find(|sig| sig.def_id == id)
-                    .map(|sig| sig.ty.clone())
-                    .unwrap_or(Ty::Infer(0)),
+                    .map_or(Ty::Infer(0), |sig| sig.ty.clone()),
                 _ => Ty::Infer(0),
             }
         } else {
@@ -1577,8 +1578,7 @@ impl<'a> Lowerer<'a> {
         let path = self.def_map.get(impl_method.func_def_id).path.clone();
         let return_ty = self
             .func_sig(impl_method.func_def_id)
-            .map(|sig| sig.return_ty.clone())
-            .unwrap_or(Ty::Infer(0));
+            .map_or(Ty::Infer(0), |sig| sig.return_ty.clone());
         Some((path, return_ty))
     }
     fn lower_operator_overload(
@@ -1597,7 +1597,7 @@ impl<'a> Lowerer<'a> {
         let (trait_name, method_name) = operator_trait_method(op)?;
         let (method_path, return_ty) =
             self.operator_trait_method_func_for_type(*type_def_id, trait_name, method_name)?;
-        let call = self.operator_method_call(method_path, return_ty.clone(), lhs, rhs, span);
+        let call = self.operator_method_call(method_path, return_ty, lhs, rhs, span);
 
         match op {
             BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => Some(call),
@@ -1754,7 +1754,7 @@ impl<'a> Lowerer<'a> {
         let raw_ty = self.lower_ast_ty(&p.ty, tp);
         let variadic = matches!(p.kind, ParamKind::Variadic);
         let ty = if variadic {
-            Ty::List(Box::new(raw_ty.clone()))
+            Ty::List(Box::new(raw_ty))
         } else {
             raw_ty
         };
@@ -1893,8 +1893,7 @@ fn lower_apply_method(
     let body_ret_ty = m
         .return_ty
         .as_ref()
-        .map(|t| l.lower_ast_ty(t, &all_tp))
-        .unwrap_or(Ty::Void);
+        .map_or(Ty::Void, |t| l.lower_ast_ty(t, &all_tp));
     let return_ty = async_return_ty(m.is_async, body_ret_ty.clone());
     l.aliases.remove("Self");
     l.push();
@@ -2054,7 +2053,7 @@ pub fn lower(
         trait_sigs,
         impl_sigs,
         type_alias_sigs,
-        newtype_map.clone(),
+        newtype_map,
         namespace,
         file_id,
         sink,
@@ -2140,8 +2139,7 @@ pub fn lower(
                     let body_ret_ty = m
                         .return_ty
                         .as_ref()
-                        .map(|t| l.lower_ast_ty(t, &all_tp))
-                        .unwrap_or(Ty::Void);
+                        .map_or(Ty::Void, |t| l.lower_ast_ty(t, &all_tp));
                     let return_ty = async_return_ty(m.is_async, body_ret_ty.clone());
                     l.aliases.remove("Self");
                     l.push();
@@ -2211,8 +2209,7 @@ pub fn lower(
                 let self_ty = l
                     .resolve_def_path(&apply.for_type.to_string())
                     .and_then(|path| def_map.lookup(&path))
-                    .map(|def_id| Ty::Named(def_id, Vec::new()))
-                    .unwrap_or(Ty::Infer(0));
+                    .map_or(Ty::Infer(0), |def_id| Ty::Named(def_id, Vec::new()));
                 let tp: Vec<SmolStr> = apply
                     .type_params
                     .iter()
@@ -2282,8 +2279,7 @@ pub fn lower(
                 let trait_path = format!("{}.{}", namespace, t.name.text);
                 let trait_self_ty = def_map
                     .lookup(&trait_path)
-                    .map(|def_id| Ty::Named(def_id, Vec::new()))
-                    .unwrap_or(Ty::Infer(0));
+                    .map_or(Ty::Infer(0), |def_id| Ty::Named(def_id, Vec::new()));
                 let mut tp: Vec<SmolStr> =
                     t.type_params.iter().map(|p| p.name.text.clone()).collect();
                 for m in &t.members {
@@ -2305,8 +2301,7 @@ pub fn lower(
                         let body_ret_ty = func
                             .return_ty
                             .as_ref()
-                            .map(|ty| l.lower_ast_ty(ty, &all_tp))
-                            .unwrap_or(Ty::Void);
+                            .map_or(Ty::Void, |ty| l.lower_ast_ty(ty, &all_tp));
                         let return_ty = async_return_ty(func.is_async, body_ret_ty.clone());
                         l.aliases.remove("Self");
                         l.push();
@@ -2360,8 +2355,7 @@ pub fn lower(
                 let body_ret_ty = f
                     .return_ty
                     .as_ref()
-                    .map(|t| l.lower_ast_ty(t, &tp))
-                    .unwrap_or(Ty::Void);
+                    .map_or(Ty::Void, |t| l.lower_ast_ty(t, &tp));
                 let return_ty = async_return_ty(f.is_async, body_ret_ty.clone());
                 l.push();
                 for p in &params {
@@ -2445,8 +2439,7 @@ pub fn lower(
                             let hir_params = l.lower_params(params, &[]);
                             let ret = return_ty
                                 .as_ref()
-                                .map(|t| l.lower_ast_ty(t, &[]))
-                                .unwrap_or(Ty::Void);
+                                .map_or(Ty::Void, |t| l.lower_ast_ty(t, &[]));
                             externs.push(HirExtern::Func {
                                 path: SmolStr::new(format!("{}.{}", namespace, name.text)),
                                 name: name.text.clone(),
@@ -2788,10 +2781,10 @@ fn normalize_variadic_call_arguments(
         return;
     }
 
-    let list_ty = params
-        .get(variadic_index)
-        .map(|param| param.ty.clone())
-        .unwrap_or_else(|| Ty::List(Box::new(Ty::Infer(0))));
+    let list_ty = params.get(variadic_index).map_or_else(
+        || Ty::List(Box::new(Ty::Infer(0))),
+        |param| param.ty.clone(),
+    );
     let elem_ty = match &list_ty {
         Ty::List(elem) => *elem.clone(),
         other => other.clone(),
@@ -2799,17 +2792,17 @@ fn normalize_variadic_call_arguments(
     let span = varargs
         .iter()
         .map(|element| element.value.span)
-        .reduce(|acc, span| acc.cover(span))
+        .reduce(ori_diagnostics::Span::cover)
         .unwrap_or(Span::DUMMY);
     let has_spread = varargs.iter().any(|element| element.spread);
     let kind = if has_spread {
         HirExprKind::ListSpreadLit {
-            elem_ty: elem_ty.clone(),
+            elem_ty,
             elements: varargs,
         }
     } else {
         HirExprKind::ListLit {
-            elem_ty: elem_ty.clone(),
+            elem_ty,
             elements: varargs.into_iter().map(|element| element.value).collect(),
         }
     };
@@ -2937,7 +2930,7 @@ fn insert_default_arguments_expr(
     }
 }
 
-impl<'a> Lowerer<'a> {
+impl Lowerer<'_> {
     fn lower_block(&mut self, block: &Block, tp: &[SmolStr]) -> HirBlock {
         self.push();
         let stmts = self.lower_stmts(&block.stmts, tp);
@@ -3349,7 +3342,7 @@ impl<'a> Lowerer<'a> {
 
 // ── Expression lowering ───────────────────────────────────────────────────────
 
-impl<'a> Lowerer<'a> {
+impl Lowerer<'_> {
     pub fn lower_expr(&mut self, expr: &Expr, tp: &[SmolStr]) -> HirExpr {
         let span = expr.span();
         match expr {
@@ -3855,10 +3848,7 @@ impl<'a> Lowerer<'a> {
                     let expanded_name = self.expand_alias(&name);
                     if let Some(intrinsic) = mem_intrinsic(&expanded_name) {
                         let args_h = self.lower_call_args(args, tp);
-                        let value_ty = args_h
-                            .first()
-                            .map(|arg| arg.value.ty.clone())
-                            .unwrap_or(Ty::Error);
+                        let value_ty = args_h.first().map_or(Ty::Error, |arg| arg.value.ty.clone());
                         let value = match intrinsic {
                             MemIntrinsic::SizeOf => self.size_of_ty(&value_ty),
                             MemIntrinsic::AlignOf => self.align_of_ty(&value_ty),
@@ -3976,7 +3966,7 @@ impl<'a> Lowerer<'a> {
                             if matches!(receiver_ty, Ty::Param { .. }) {
                                 let receiver = HirExpr {
                                     kind: HirExprKind::Var(receiver_name.text.clone()),
-                                    ty: receiver_ty.clone(),
+                                    ty: receiver_ty,
                                     span: receiver_name.span,
                                 };
                                 let args_h = args
@@ -4061,7 +4051,7 @@ impl<'a> Lowerer<'a> {
                                                     kind: HirExprKind::Var(
                                                         receiver_name.text.clone(),
                                                     ),
-                                                    ty: receiver_ty.clone(),
+                                                    ty: receiver_ty,
                                                     span: receiver_name.span,
                                                 };
                                                 let callee_h = HirExpr {
@@ -4370,7 +4360,7 @@ impl<'a> Lowerer<'a> {
             }
             Expr::List { elements, .. } => {
                 let elems: Vec<HirExpr> = elements.iter().map(|e| self.lower_expr(e, tp)).collect();
-                let elem_ty = elems.first().map(|e| e.ty.clone()).unwrap_or(Ty::Infer(0));
+                let elem_ty = elems.first().map_or(Ty::Infer(0), |e| e.ty.clone());
                 let ty = Ty::List(Box::new(elem_ty.clone()));
                 HirExpr {
                     kind: HirExprKind::ListLit {
@@ -4461,9 +4451,7 @@ impl<'a> Lowerer<'a> {
                 ..
             } => {
                 let def_id = self.resolve_def_id_with_kind(&type_name.to_string(), DefKind::Struct);
-                let ty = def_id
-                    .map(|id| Ty::Named(id, Vec::new()))
-                    .unwrap_or(Ty::Infer(0));
+                let ty = def_id.map_or(Ty::Infer(0), |id| Ty::Named(id, Vec::new()));
                 // Each field value is lowered against its declared type. It
                 // matters for forms whose storage depends on context: `[1, 2]`
                 // is a heap list by default but must become an inline array
@@ -4509,12 +4497,10 @@ impl<'a> Lowerer<'a> {
             } => {
                 let def_path = type_name
                     .as_ref()
-                    .map(|t| t.to_string())
+                    .map(std::string::ToString::to_string)
                     .unwrap_or_default();
                 let def_id = self.resolve_def_id_with_kind(&def_path, DefKind::Enum);
-                let ty = def_id
-                    .map(|id| Ty::Named(id, Vec::new()))
-                    .unwrap_or(Ty::Infer(0));
+                let ty = def_id.map_or(Ty::Infer(0), |id| Ty::Named(id, Vec::new()));
                 HirExpr {
                     kind: HirExprKind::EnumVariant {
                         def_id,
@@ -4533,12 +4519,10 @@ impl<'a> Lowerer<'a> {
             } => {
                 let def_path = type_name
                     .as_ref()
-                    .map(|t| t.to_string())
+                    .map(std::string::ToString::to_string)
                     .unwrap_or_default();
                 let def_id = self.resolve_def_id_with_kind(&def_path, DefKind::Enum);
-                let ty = def_id
-                    .map(|id| Ty::Named(id, Vec::new()))
-                    .unwrap_or(Ty::Infer(0));
+                let ty = def_id.map_or(Ty::Infer(0), |id| Ty::Named(id, Vec::new()));
                 let hfields: Vec<(SmolStr, HirExpr)> = fields
                     .iter()
                     .map(|f| (f.name.text.clone(), self.lower_expr(&f.value, tp)))
@@ -4581,14 +4565,8 @@ impl<'a> Lowerer<'a> {
                     .iter()
                     .map(|(k, v)| (self.lower_expr(k, tp), self.lower_expr(v, tp)))
                     .collect();
-                let key_ty = hentries
-                    .first()
-                    .map(|(k, _)| k.ty.clone())
-                    .unwrap_or(Ty::Infer(0));
-                let value_ty = hentries
-                    .first()
-                    .map(|(_, v)| v.ty.clone())
-                    .unwrap_or(Ty::Infer(0));
+                let key_ty = hentries.first().map_or(Ty::Infer(0), |(k, _)| k.ty.clone());
+                let value_ty = hentries.first().map_or(Ty::Infer(0), |(_, v)| v.ty.clone());
                 let ty = Ty::Map(Box::new(key_ty.clone()), Box::new(value_ty.clone()));
                 HirExpr {
                     kind: HirExprKind::MapLit {
@@ -4604,7 +4582,7 @@ impl<'a> Lowerer<'a> {
             // ── Set literal: `#{a, b, ...}` ─────────────────────────────────
             Expr::Set { elements, .. } => {
                 let elems: Vec<HirExpr> = elements.iter().map(|e| self.lower_expr(e, tp)).collect();
-                let elem_ty = elems.first().map(|e| e.ty.clone()).unwrap_or(Ty::Infer(0));
+                let elem_ty = elems.first().map_or(Ty::Infer(0), |e| e.ty.clone());
                 let ty = Ty::Set(Box::new(elem_ty.clone()));
                 HirExpr {
                     kind: HirExprKind::SetLit {
@@ -4634,7 +4612,7 @@ impl<'a> Lowerer<'a> {
                         base: Box::new(base_h.clone()),
                         updates: hupdates,
                     },
-                    ty: base_h.ty.clone(),
+                    ty: base_h.ty,
                     span,
                 }
             }
@@ -4748,8 +4726,7 @@ impl<'a> Lowerer<'a> {
                     Some(ty) => self.lower_ast_ty(ty, tp),
                     None => expected_fn
                         .as_ref()
-                        .map(|(params, _)| params[index].clone())
-                        .unwrap_or(Ty::Infer(0)),
+                        .map_or(Ty::Infer(0), |(params, _)| params[index].clone()),
                 },
                 default: None,
                 contract: None,
@@ -4797,7 +4774,7 @@ impl<'a> Lowerer<'a> {
                 (body, return_ty)
             }
             ClosureBody::Block(block) => {
-                let return_ty = declared_ret.clone().unwrap_or(Ty::Void);
+                let return_ty = declared_ret.unwrap_or(Ty::Void);
                 self.ret_ty = return_ty.clone();
                 (self.lower_block(block, tp), return_ty)
             }
@@ -5721,8 +5698,7 @@ fn lower_pattern(
                                         .iter()
                                         .find(|(field_name, _)| *field_name == field.name.text)
                                 })
-                                .map(|(_, ty)| ty.clone())
-                                .unwrap_or(Ty::Infer(0));
+                                .map_or(Ty::Infer(0), |(_, ty)| ty.clone());
                             (
                                 field.name.text.clone(),
                                 lower_pattern(&field.pattern, &field_ty, enum_sigs),
@@ -5773,15 +5749,16 @@ fn qualified_prefix(q: &ori_ast::common::QualifiedName) -> Option<String> {
 }
 
 fn parse_int_lit(raw: &str) -> i64 {
-    parse_int_literal(raw)
-        .map(|parsed| parsed.value)
-        .unwrap_or_else(|err| {
+    parse_int_literal(raw).map_or_else(
+        |err| {
             eprintln!(
                 "ori: ICE: invalid integer literal reached HIR lowering: {}",
                 err.message
             );
             0
-        })
+        },
+        |parsed| parsed.value,
+    )
 }
 
 fn parse_float_lit(raw: &str) -> ori_types::literal::ParsedFloatLiteral {
@@ -5816,10 +5793,8 @@ fn index_result_ty(ty: &Ty) -> Ty {
 
 fn apply_expected_expr_ty(expr: &mut HirExpr, expected: &Ty) {
     match (&mut expr.kind, expected) {
-        (HirExprKind::None_, Ty::Optional(_))
-        | (HirExprKind::Some_(_), Ty::Optional(_))
-        | (HirExprKind::Ok_(_), Ty::Result(_, _))
-        | (HirExprKind::Err_(_), Ty::Result(_, _)) => {
+        (HirExprKind::None_ | HirExprKind::Some_(_), Ty::Optional(_))
+        | (HirExprKind::Ok_(_) | HirExprKind::Err_(_), Ty::Result(_, _)) => {
             expr.ty = expected.clone();
         }
         (HirExprKind::StructLit { def_id, .. }, Ty::Named(expected_def_id, _))
@@ -5864,7 +5839,9 @@ fn async_return_ty(is_async: bool, inner: Ty) -> Ty {
 }
 
 fn binary_result_ty(op: ori_ast::expr::BinaryOp, lty: &Ty, _rty: &Ty) -> Ty {
-    use ori_ast::expr::BinaryOp::*;
+    use ori_ast::expr::BinaryOp::{
+        Add, And, Band, Bor, Bxor, Div, Eq, Ge, Gt, Le, Lt, Mul, Ne, Or, Rem, Shl, Shr, Sub,
+    };
     match op {
         Add | Sub | Mul | Div | Rem => lty.clone(),
         Eq | Ne | Lt | Le | Gt | Ge | And | Or => Ty::Bool,
@@ -5873,7 +5850,7 @@ fn binary_result_ty(op: ori_ast::expr::BinaryOp, lty: &Ty, _rty: &Ty) -> Ty {
     }
 }
 
-fn operator_trait_method(op: BinaryOp) -> Option<(&'static str, &'static str)> {
+const fn operator_trait_method(op: BinaryOp) -> Option<(&'static str, &'static str)> {
     match op {
         BinaryOp::Add => Some(("Addable", "add")),
         BinaryOp::Sub => Some(("Subtractable", "subtract")),
@@ -5942,7 +5919,7 @@ fn lvalue_to_expr(lv: &HirLValue, span: Span) -> HirExpr {
     }
 }
 
-fn compound_op_to_binary(op: ori_ast::stmt::CompoundOp) -> ori_ast::expr::BinaryOp {
+const fn compound_op_to_binary(op: ori_ast::stmt::CompoundOp) -> ori_ast::expr::BinaryOp {
     use ori_ast::expr::BinaryOp;
     use ori_ast::stmt::CompoundOp;
     match op {

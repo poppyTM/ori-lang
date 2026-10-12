@@ -210,7 +210,7 @@ fn collect_orl_files(
     Ok(())
 }
 
-fn should_skip_path(_path: &Path) -> bool {
+const fn should_skip_path(_path: &Path) -> bool {
     // Reserved for future path filters (e.g. vendor trees). No packages skipped today.
     false
 }
@@ -367,7 +367,7 @@ fn split_line_comment(line: &str) -> (&str, &str) {
     (line, "")
 }
 
-fn is_ident_char(c: char) -> bool {
+const fn is_ident_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
 }
 
@@ -473,11 +473,11 @@ fn rewrite_import_only(code: &mut String) -> bool {
         return false;
     }
     let next = code.replacen(" only ", " ", 1);
-    if next != *code {
+    if next == *code {
+        false
+    } else {
         *code = next;
         true
-    } else {
-        false
     }
 }
 
@@ -606,11 +606,11 @@ fn rewrite_where_is_bounds(code: &mut String) -> bool {
         out.push(ch);
         i += ch.len_utf8();
     }
-    if out != original {
+    if out == original {
+        false
+    } else {
         *code = out;
         true
-    } else {
-        false
     }
 }
 
@@ -692,7 +692,7 @@ fn parse_where_clause_at(s: &str, start: usize) -> Option<(usize, String)> {
     let consumed_bytes: usize = s[start..]
         .chars()
         .take(consumed_chars)
-        .map(|c| c.len_utf8())
+        .map(char::len_utf8)
         .sum();
     Some((consumed_bytes, replacement))
 }

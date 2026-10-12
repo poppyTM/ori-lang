@@ -314,7 +314,7 @@ mod tests {
 
     #[test]
     fn accepts_same_struct_defid_from_merged_modules() {
-        use crate::hir::HirStruct;
+        use crate::hir::*;
         let mut module = empty_module();
         for _ in 0..2 {
             module.structs.push(HirStruct {

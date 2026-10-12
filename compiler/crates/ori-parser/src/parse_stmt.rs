@@ -18,7 +18,7 @@ const BLOCK_TERMINATORS: &[TokenKind] = &[
     TokenKind::Case,
 ];
 
-impl<'src> Parser<'src> {
+impl Parser<'_> {
     /// Parse a block: zero or more statements, stopping at a terminator token.
     pub fn parse_block(&mut self) -> Option<Block> {
         // Nested control flow recurses through here, so blocks share the same
@@ -35,16 +35,15 @@ impl<'src> Parser<'src> {
         let start = self.current_span();
         let mut stmts = Vec::new();
         while !self.at_any(BLOCK_TERMINATORS) && !self.at_eof() {
-            match self.parse_stmt() {
-                Some(s) => stmts.push(s),
-                None => {
-                    // Error recovery: skip to next statement boundary
-                    self.synchronize(BLOCK_TERMINATORS);
-                    break;
-                }
+            if let Some(s) = self.parse_stmt() {
+                stmts.push(s)
+            } else {
+                // Error recovery: skip to next statement boundary
+                self.synchronize(BLOCK_TERMINATORS);
+                break;
             }
         }
-        let end = stmts.last().map(stmt_span).unwrap_or(start);
+        let end = stmts.last().map_or(start, stmt_span);
         Some(Block {
             stmts,
             span: start.cover(end),
@@ -229,10 +228,7 @@ impl<'src> Parser<'src> {
         } else {
             Some(Box::new(self.parse_expr()?))
         };
-        let span = value
-            .as_ref()
-            .map(|v| start.cover(v.span()))
-            .unwrap_or(start);
+        let span = value.as_ref().map_or(start, |v| start.cover(v.span()));
         Some(Stmt::Return(ReturnStmt { value, span }))
     }
 
@@ -453,7 +449,7 @@ impl<'src> Parser<'src> {
                 self.advance(); // else
                 self.expect(&TokenKind::Colon)?;
                 let body = self.parse_case_body()?;
-                let end = body.last().map(stmt_span).unwrap_or(case_span);
+                let end = body.last().map_or(case_span, stmt_span);
                 cases.push(MatchCase::Else {
                     body,
                     span: case_span.cover(end),
@@ -468,7 +464,7 @@ impl<'src> Parser<'src> {
             };
             self.expect(&TokenKind::Colon)?;
             let body = self.parse_case_body()?;
-            let end = body.last().map(stmt_span).unwrap_or(case_span);
+            let end = body.last().map_or(case_span, stmt_span);
             cases.push(MatchCase::Pattern {
                 pattern,
                 guard,
@@ -489,12 +485,11 @@ impl<'src> Parser<'src> {
         let mut stmts = Vec::new();
         let stop = &[TokenKind::Case, TokenKind::End];
         while !self.at_any(stop) && !self.at_eof() {
-            match self.parse_stmt() {
-                Some(s) => stmts.push(s),
-                None => {
-                    self.synchronize(stop);
-                    break;
-                }
+            if let Some(s) = self.parse_stmt() {
+                stmts.push(s)
+            } else {
+                self.synchronize(stop);
+                break;
             }
         }
         Some(stmts)
@@ -576,16 +571,15 @@ impl<'src> Parser<'src> {
 
     fn expr_to_lvalue_or_error(&mut self, expr: Expr) -> Option<LValue> {
         let span = expr_lvalue_span(&expr);
-        match expr_to_lvalue(expr) {
-            Some(lvalue) => Some(lvalue),
-            None => {
-                self.error(
-                    "parse.invalid_lvalue",
-                    "expected an assignable target",
-                    span,
-                );
-                None
-            }
+        if let Some(lvalue) = expr_to_lvalue(expr) {
+            Some(lvalue)
+        } else {
+            self.error(
+                "parse.invalid_lvalue",
+                "expected an assignable target",
+                span,
+            );
+            None
         }
     }
 }
