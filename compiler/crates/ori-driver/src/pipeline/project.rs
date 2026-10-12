@@ -52,7 +52,16 @@ pub fn run_new_project(
     root: &Path,
     options: NewProjectOptions,
 ) -> Result<NewProjectOutput, String> {
-    if !options.is_init {
+    if options.is_init {
+        if root.join("ori.proj").exists() || root.join("ori.pkg.toml").exists() {
+            return Err(format!(
+                "project.init_exists: `{}` already contains an ori.proj or ori.pkg.toml",
+                root.display()
+            ));
+        }
+        std::fs::create_dir_all(root)
+            .map_err(|e| format!("cannot create project `{}`: {e}", root.display()))?;
+    } else {
         if root.exists() {
             let mut entries = std::fs::read_dir(root)
                 .map_err(|e| format!("cannot inspect `{}`: {e}", root.display()))?;
@@ -62,15 +71,6 @@ pub fn run_new_project(
                     root.display()
                 ));
             }
-        }
-        std::fs::create_dir_all(root)
-            .map_err(|e| format!("cannot create project `{}`: {e}", root.display()))?;
-    } else {
-        if root.join("ori.proj").exists() || root.join("ori.pkg.toml").exists() {
-            return Err(format!(
-                "project.init_exists: `{}` already contains an ori.proj or ori.pkg.toml",
-                root.display()
-            ));
         }
         std::fs::create_dir_all(root)
             .map_err(|e| format!("cannot create project `{}`: {e}", root.display()))?;
@@ -1251,7 +1251,7 @@ fn load_source_recursive(
                         sink.emit(
                             Diagnostic::error(
                                 "project.circular_import",
-                                format!("import cycle detected: {}", cycle),
+                                format!("import cycle detected: {cycle}"),
                             )
                             .with_label(Label::primary(file_id, span, "cyclic import here"))
                             .with_action(
@@ -1291,7 +1291,7 @@ fn load_source_recursive(
                 sink.emit(
                     Diagnostic::error(
                         "bind.stdlib_module_unknown",
-                        format!("standard library module `{}` is not known", import),
+                        format!("standard library module `{import}` is not known"),
                     )
                     .with_label(Label::primary(file_id, span, "stdlib import here"))
                     .with_action("check the module name or use an implemented `ori.*` module"),
@@ -1312,7 +1312,7 @@ fn load_source_recursive(
                     sink.emit(
                         Diagnostic::error(
                             "project.circular_import",
-                            format!("import cycle detected: {}", cycle),
+                            format!("import cycle detected: {cycle}"),
                         )
                         .with_label(Label::primary(file_id, span, "cyclic import here"))
                         .with_action(
@@ -1342,7 +1342,7 @@ fn load_source_recursive(
             ImportResolution::Ambiguous(paths) => {
                 let mut diagnostic = Diagnostic::error(
                     "bind.import_ambiguous",
-                    format!("import `{}` matches more than one file", import),
+                    format!("import `{import}` matches more than one file"),
                 )
                     .with_label(Label::primary(file_id, span, "ambiguous import here"))
                     .with_why("the current import search policy found multiple matching `.orl` files")
@@ -1356,7 +1356,7 @@ fn load_source_recursive(
                 sink.emit(
                     Diagnostic::error(
                         "bind.import_not_found",
-                        format!("import `{}` not found", import),
+                        format!("import `{import}` not found"),
                     )
                     .with_label(Label::primary(file_id, span, "imported here"))
                     .with_action("place the imported namespace in a matching `.orl` file"),
@@ -1382,10 +1382,7 @@ fn validate_import_namespace(
             sink.emit(
                 Diagnostic::error(
                     "project.namespace_file_mismatch",
-                    format!(
-                        "import `{}` resolved to file declaring `{}`",
-                        import, declared
-                    ),
+                    format!("import `{import}` resolved to file declaring `{declared}`"),
                 )
                 .with_label(Label::primary(file_id, span, "imported here"))
                 .with_action("make the imported file namespace match the import path"),
@@ -1407,8 +1404,7 @@ fn import_cycle_description(
             loaded
                 .iter()
                 .find(|s| s.path == *path)
-                .map(|s| namespace_of(&s.ast))
-                .unwrap_or_else(|| path.display().to_string())
+                .map_or_else(|| path.display().to_string(), |s| namespace_of(&s.ast))
         })
         .collect();
     parts.push(import.to_string());
@@ -1458,7 +1454,7 @@ fn find_stdlib_selective_sources(import: &str) -> Option<Vec<(PathBuf, String)>>
 fn find_stdlib_flatten_submodules(import: &str) -> Option<Vec<(PathBuf, String)>> {
     let relative = import.strip_prefix("ori.")?;
     let stdlib_root = find_stdlib_root()?;
-    let mut dir = stdlib_root.clone();
+    let mut dir = stdlib_root;
     for segment in relative.split('.') {
         dir.push(segment);
     }

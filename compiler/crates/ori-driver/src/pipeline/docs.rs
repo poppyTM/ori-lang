@@ -78,14 +78,13 @@ pub fn run_doc_with_options(path: &Path, options: DocOptions) -> Result<DocOutpu
         }
     }
 
-    let markdown = if !sink.has_errors() {
+    let markdown = if sink.has_errors() {
+        String::new()
+    } else {
         let doc_mode = config
             .as_ref()
-            .map(|config| config.doc_mode)
-            .unwrap_or(ProjectDocMode::SidecarFirst);
+            .map_or(ProjectDocMode::SidecarFirst, |config| config.doc_mode);
         render_documentation_markdown(&loaded, &external_docs, doc_mode)
-    } else {
-        String::new()
     };
     let html = if !sink.has_errors() && options.format == DocFormat::Html {
         doc_html::render_static_html(&markdown)
@@ -304,9 +303,7 @@ fn validate_oridoc_index(
         }
     }
 
-    let requirement = config
-        .map(|config| config.require_public_docs)
-        .unwrap_or(DocRequirement::Off);
+    let requirement = config.map_or(DocRequirement::Off, |config| config.require_public_docs);
     if requirement == DocRequirement::Off {
         return;
     }
@@ -364,8 +361,7 @@ fn collect_doc_symbols(loaded: &[LoadedSource]) -> BTreeMap<String, DocSymbol> {
             let leading_start = item
                 .attrs
                 .first()
-                .map(|attr| attr.span.start)
-                .unwrap_or_else(|| item.item.span().start);
+                .map_or_else(|| item.item.span().start, |attr| attr.span.start);
             let inline_doc = doc_comment_for(source, leading_start);
             match &item.item {
                 Item::Func(func) => insert_doc_symbol(
@@ -619,7 +615,7 @@ fn collect_doc_symbols(loaded: &[LoadedSource]) -> BTreeMap<String, DocSymbol> {
                                 &mut symbols,
                                 source,
                                 DocSymbolInput {
-                                    symbol: format!("{}.{}", namespace, name),
+                                    symbol: format!("{namespace}.{name}"),
                                     kind: "extern function",
                                     signature: func_signature_parts_text(
                                         source,
@@ -645,7 +641,7 @@ fn collect_doc_symbols(loaded: &[LoadedSource]) -> BTreeMap<String, DocSymbol> {
                                 &mut symbols,
                                 source,
                                 DocSymbolInput {
-                                    symbol: format!("{}.{}", namespace, name),
+                                    symbol: format!("{namespace}.{name}"),
                                     kind: "extern variable",
                                     signature: format!(
                                         "{}var {}: {}",
@@ -815,8 +811,7 @@ pub(super) fn validate_doc_tags(source: &LoadedSource, sink: &mut DiagnosticSink
         let leading_start = item
             .attrs
             .first()
-            .map(|attr| attr.span.start)
-            .unwrap_or_else(|| item.item.span().start);
+            .map_or_else(|| item.item.span().start, |attr| attr.span.start);
         match &item.item {
             Item::Func(func) => validate_func_doc_tags(
                 source,
@@ -1021,7 +1016,7 @@ fn doc_param_tags(comment: &str) -> Vec<DocParamTag<'_>> {
         .collect()
 }
 
-fn return_type_requires_doc(return_ty: Option<&Type>) -> bool {
+const fn return_type_requires_doc(return_ty: Option<&Type>) -> bool {
     !matches!(return_ty, None | Some(Type::Void(_)))
 }
 
@@ -1620,8 +1615,7 @@ fn render_source_documentation(
         let leading_start = item
             .attrs
             .first()
-            .map(|attr| attr.span.start)
-            .unwrap_or_else(|| item.item.span().start);
+            .map_or_else(|| item.item.span().start, |attr| attr.span.start);
 
         match &item.item {
             Item::Func(func) => {
@@ -1860,7 +1854,7 @@ fn render_source_documentation(
                             if let Some(doc) = doc_comment_for(source, span.start) {
                                 append_doc_entry(
                                     out,
-                                    &format!("{}.{}", namespace, name),
+                                    &format!("{namespace}.{name}"),
                                     "extern function",
                                     &func_signature_parts_text(
                                         source,
@@ -1885,7 +1879,7 @@ fn render_source_documentation(
                             if let Some(doc) = doc_comment_for(source, span.start) {
                                 append_doc_entry(
                                     out,
-                                    &format!("{}.{}", namespace, name),
+                                    &format!("{namespace}.{name}"),
                                     "extern variable",
                                     &format!(
                                         "{}var {}: {}",
@@ -2006,10 +2000,10 @@ fn cleaned_doc_lines(comment: &str) -> Vec<String> {
 }
 
 fn trim_empty_doc_lines(lines: &mut Vec<String>) {
-    while lines.first().is_some_and(|line| line.is_empty()) {
+    while lines.first().is_some_and(std::string::String::is_empty) {
         lines.remove(0);
     }
-    while lines.last().is_some_and(|line| line.is_empty()) {
+    while lines.last().is_some_and(std::string::String::is_empty) {
         lines.pop();
     }
 }

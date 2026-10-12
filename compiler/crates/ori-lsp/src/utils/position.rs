@@ -39,7 +39,7 @@ impl PositionEncoding {
         encoding
     }
 
-    pub fn as_lsp_kind(self) -> PositionEncodingKind {
+    pub const fn as_lsp_kind(self) -> PositionEncodingKind {
         match self {
             Self::Utf8 => PositionEncodingKind::UTF8,
             Self::Utf16 => PositionEncodingKind::UTF16,

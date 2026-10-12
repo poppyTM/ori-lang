@@ -114,11 +114,11 @@ impl DiagnosticSink {
         self.diagnostics.push(diag);
     }
 
-    pub fn has_errors(&self) -> bool {
+    pub const fn has_errors(&self) -> bool {
         self.error_count > 0
     }
 
-    pub fn error_count(&self) -> usize {
+    pub const fn error_count(&self) -> usize {
         self.error_count
     }
 

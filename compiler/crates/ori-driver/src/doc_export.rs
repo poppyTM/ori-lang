@@ -67,10 +67,10 @@ fn build_runtime_symbols() -> (Vec<ExportSymbol>, BTreeSet<String>) {
 
     for entry in stdlib_runtime_functions() {
         let canonical = entry.canonical_path.to_string();
-        let (module, name) = canonical
-            .rsplit_once('.')
-            .map(|(m, n)| (m.to_string(), n.to_string()))
-            .unwrap_or_else(|| (canonical.clone(), canonical.clone()));
+        let (module, name) = canonical.rsplit_once('.').map_or_else(
+            || (canonical.clone(), canonical.clone()),
+            |(m, n)| (m.to_string(), n.to_string()),
+        );
 
         modules.insert(module.clone());
 
@@ -258,8 +258,7 @@ fn chrono_lite_timestamp() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_secs());
     format!("{secs}")
 }
 

@@ -35,10 +35,10 @@ pub fn run_fmt(path: &Path) -> Result<FmtOutput, String> {
     let file_id = cache.add(path, source.clone());
     let tokens = ori_lexer::lex(&source, file_id, &mut sink);
     let _ast = ori_parser::parse(&tokens, &source, file_id, &mut sink);
-    let formatted = if !sink.has_errors() {
-        format_source_text(&source)
-    } else {
+    let formatted = if sink.has_errors() {
         String::new()
+    } else {
+        format_source_text(&source)
     };
     let has_errors = sink.has_errors();
     let diagnostics = sink.into_diagnostics();
@@ -183,7 +183,7 @@ fn is_end_line(line: &str) -> bool {
 }
 
 fn opens_block_after(line: &str, next_line: Option<&str>, block_stack: &[BlockKind]) -> bool {
-    if is_comment_line(line) || is_end_line(line) || line.starts_with("@") {
+    if is_comment_line(line) || is_end_line(line) || line.starts_with('@') {
         return false;
     }
 
@@ -294,7 +294,7 @@ fn next_significant_line<'a>(lines: &'a [&str], start: usize) -> Option<&'a str>
         .iter()
         .skip(start)
         .map(|line| line.trim())
-        .find(|line| !line.is_empty() && !is_comment_line(line) && !line.starts_with("@"))
+        .find(|line| !line.is_empty() && !is_comment_line(line) && !line.starts_with('@'))
 }
 
 #[cfg(test)]

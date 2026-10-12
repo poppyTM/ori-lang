@@ -156,7 +156,7 @@ impl Backend {
             // First freshness check before heavy work (debounce).
             let should_run = {
                 let last = last_change.read().await;
-                last.get(&uri).map(|t| *t == now).unwrap_or(false)
+                last.get(&uri).is_some_and(|t| *t == now)
             };
             if !should_run {
                 return;
@@ -190,12 +190,12 @@ impl Backend {
             // Second freshness check immediately before commit — prevents stale publish.
             let still_current = {
                 let last = last_change.read().await;
-                let debounce_current = last.get(&uri).map(|t| *t == now).unwrap_or(false);
-                if !debounce_current {
-                    false
-                } else {
+                let debounce_current = last.get(&uri).is_some_and(|t| *t == now);
+                if debounce_current {
                     let proj = project.read().await;
                     proj.document_version(&uri) == snapshot_version
+                } else {
+                    false
                 }
             };
             if !still_current {
@@ -221,13 +221,12 @@ impl Backend {
                     if let Some(target) = &path {
                         let fresh = {
                             let last = last_change.read().await;
-                            let debounce_current =
-                                last.get(&uri).map(|t| *t == now).unwrap_or(false);
-                            if !debounce_current {
-                                false
-                            } else {
+                            let debounce_current = last.get(&uri).is_some_and(|t| *t == now);
+                            if debounce_current {
                                 let proj = project.read().await;
                                 proj.document_version(&uri) == snapshot_version
+                            } else {
+                                false
                             }
                         };
                         if fresh {
@@ -609,13 +608,10 @@ impl LanguageServer for Backend {
                         utils::uri::word_at_position(&source, position).unwrap_or_default();
                     for import in index.imports() {
                         if import.alias.starts_with(&partial) || partial.is_empty() {
-                            let detail = import
-                                .file_path
-                                .as_ref()
-                                .map(|path| {
-                                    format!("import {} ({})", import.namespace, path.display())
-                                })
-                                .unwrap_or_else(|| format!("import {}", import.namespace));
+                            let detail = import.file_path.as_ref().map_or_else(
+                                || format!("import {}", import.namespace),
+                                |path| format!("import {} ({})", import.namespace, path.display()),
+                            );
                             items.push(CompletionItem {
                                 label: import.alias.clone(),
                                 kind: Some(CompletionItemKind::MODULE),
@@ -1060,7 +1056,7 @@ impl LanguageServer for Backend {
 
         let import_map = import_alias_map(&source);
         if let Some(sig) = stdlib_catalog().signature_for_call(&func_name, &import_map) {
-            let param_slice = sig.find('(').map(|i| &sig[i..]).unwrap_or("()");
+            let param_slice = sig.find('(').map_or("()", |i| &sig[i..]);
             let params = parse_params_from_signature(param_slice);
             let active_param = count_commas_before(&source, open_paren_pos, position);
             let max_param = params.len().saturating_sub(1) as u32;
@@ -1100,7 +1096,7 @@ impl LanguageServer for Backend {
 
         let active_param = count_commas_before(&source, open_paren_pos, position);
 
-        let label = format!("{}{}", func_name, sig_str);
+        let label = format!("{func_name}{sig_str}");
         let max_param = params.len().saturating_sub(1) as u32;
         let active = (active_param as u32).min(max_param);
 
@@ -1143,7 +1139,7 @@ impl LanguageServer for Backend {
                     lenses.push(CodeLens {
                         range: sym.range,
                         command: Some(Command {
-                            title: format!("{} references", ref_count),
+                            title: format!("{ref_count} references"),
                             command: "ori.showReferences".into(),
                             arguments: None,
                         }),
@@ -1212,7 +1208,7 @@ impl LanguageServer for Backend {
                     return Ok(None);
                 }
                 let file_path = &args[0];
-                let test_filter = args.get(1).map(|s| s.as_str());
+                let test_filter = args.get(1).map(std::string::String::as_str);
 
                 // Run tests via ori driver
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1348,7 +1344,7 @@ fn import_prefix_at_position(source: &str, position: Position) -> String {
     before[import_pos + 7..].trim().to_string()
 }
 
-fn symbol_kind_to_cik(kind: &index::semantic::SymbolKind) -> CompletionItemKind {
+const fn symbol_kind_to_cik(kind: &index::semantic::SymbolKind) -> CompletionItemKind {
     match kind {
         index::semantic::SymbolKind::Function => CompletionItemKind::FUNCTION,
         index::semantic::SymbolKind::Method => CompletionItemKind::METHOD,
@@ -1362,7 +1358,7 @@ fn symbol_kind_to_cik(kind: &index::semantic::SymbolKind) -> CompletionItemKind 
     }
 }
 
-fn semantic_kind_to_lsp(kind: &index::semantic::SymbolKind) -> SymbolKind {
+const fn semantic_kind_to_lsp(kind: &index::semantic::SymbolKind) -> SymbolKind {
     match kind {
         index::semantic::SymbolKind::Function => SymbolKind::FUNCTION,
         index::semantic::SymbolKind::Method => SymbolKind::METHOD,
@@ -1391,7 +1387,7 @@ fn classify_semantic_token(
         index::semantic::SymbolKind::Import => SemanticTokenType::NAMESPACE,
     };
     let modifier = match sym.kind {
-        index::semantic::SymbolKind::Function if sym.name.starts_with("_") => {
+        index::semantic::SymbolKind::Function if sym.name.starts_with('_') => {
             vec![SemanticTokenModifier::DECLARATION]
         }
         _ => vec![],
@@ -1417,7 +1413,7 @@ static SEMANTIC_LEGEND: std::sync::LazyLock<SemanticTokensLegend> =
         token_modifiers: vec![SemanticTokenModifier::DECLARATION],
     });
 
-/// Encode raw tokens into delta-encoded LSP SemanticToken structs.
+/// Encode raw tokens into delta-encoded LSP `SemanticToken` structs.
 fn encode_semantic_tokens(
     tokens: &[(u32, u32, u32, SemanticTokenType, Vec<SemanticTokenModifier>)],
     legend: &SemanticTokensLegend,
@@ -1572,7 +1568,7 @@ fn find_enclosing_call(source: &str, position: Position) -> Option<(String, usiz
     Some((func_name.to_string(), abs_pos))
 }
 
-/// Count commas between open_paren and cursor position.
+/// Count commas between `open_paren` and cursor position.
 fn count_commas_before(source: &str, open_pos: usize, cursor: Position) -> usize {
     let lines: Vec<&str> = source.lines().collect();
     let cursor_abs = lines[..cursor.line as usize]
@@ -1626,7 +1622,7 @@ fn position_in_range(position: Position, range: &Range) -> bool {
     !position_is_before(position, range.start) && position_is_before(position, range.end)
 }
 
-fn position_is_before(left: Position, right: Position) -> bool {
+const fn position_is_before(left: Position, right: Position) -> bool {
     left.line < right.line || (left.line == right.line && left.character < right.character)
 }
 
@@ -1696,7 +1692,7 @@ fn main() {
     // Request handlers call the recursive front end, so both the thread that
     // drives the runtime and its workers need the compiler's stack budget
     // rather than tokio's 2 MiB default.
-    ori_driver::pipeline::with_frontend_stack(run_server)
+    ori_driver::pipeline::with_frontend_stack(run_server);
 }
 
 fn run_server() {

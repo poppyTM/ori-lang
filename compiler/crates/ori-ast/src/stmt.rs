@@ -102,12 +102,12 @@ pub struct CompoundAssignStmt {
 pub enum LValue {
     Ident(Name),
     Field {
-        base: Box<LValue>,
+        base: Box<Self>,
         field: Name,
         span: Span,
     },
     Index {
-        base: Box<LValue>,
+        base: Box<Self>,
         index: Box<Expr>,
         span: Span,
     },

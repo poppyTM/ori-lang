@@ -30,19 +30,19 @@ pub enum Pattern {
     },
 
     /// `some(inner)` — optional presence.
-    Some(Box<Pattern>, Span),
+    Some(Box<Self>, Span),
 
     /// `none` — optional absence.
     None(Span),
 
     /// `ok(inner)` — result success.
-    Ok(Box<Pattern>, Span),
+    Ok(Box<Self>, Span),
 
     /// `err(inner)` — result failure.
-    Err(Box<Pattern>, Span),
+    Err(Box<Self>, Span),
 
     /// `tuple(a, b, c)` — tuple destructuring.
-    Tuple(Vec<Pattern>, Span),
+    Tuple(Vec<Self>, Span),
 
     /// `case North or South:` — one arm, several alternatives.
     ///
@@ -50,18 +50,18 @@ pub enum Pattern {
     /// same names to the same types, which is a rule readers must carry in
     /// their head. Keeping it binding-free means an or-pattern is a pure
     /// "is it one of these?" test.
-    Or(Vec<Pattern>, Span),
+    Or(Vec<Self>, Span),
 }
 
 impl Pattern {
     pub fn span(&self) -> Span {
         match self {
-            Pattern::Wildcard(s) | Pattern::None(s) => *s,
-            Pattern::Literal(e) => e.span(),
-            Pattern::Binding(n) => n.span,
-            Pattern::VariantUnit { span, .. } | Pattern::VariantNamed { span, .. } => *span,
-            Pattern::Some(_, s) | Pattern::Ok(_, s) | Pattern::Err(_, s) => *s,
-            Pattern::Tuple(_, s) | Pattern::Or(_, s) => *s,
+            Self::Wildcard(s) | Self::None(s) => *s,
+            Self::Literal(e) => e.span(),
+            Self::Binding(n) => n.span,
+            Self::VariantUnit { span, .. } | Self::VariantNamed { span, .. } => *span,
+            Self::Some(_, s) | Self::Ok(_, s) | Self::Err(_, s) => *s,
+            Self::Tuple(_, s) | Self::Or(_, s) => *s,
         }
     }
 }

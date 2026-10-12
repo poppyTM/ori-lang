@@ -49,7 +49,7 @@ impl QualifiedName {
             .expect("QualifiedName is always non-empty")
     }
 
-    pub fn is_single(&self) -> bool {
+    pub const fn is_single(&self) -> bool {
         self.parts.len() == 1
     }
 }
@@ -75,7 +75,7 @@ pub enum Visibility {
 
 impl Visibility {
     pub fn is_public(self) -> bool {
-        self == Visibility::Public
+        self == Self::Public
     }
 }
 
@@ -128,13 +128,13 @@ pub enum CfgPredicate {
     /// A composition such as `all(...)`, `any(...)`, or `not(...)`.
     Call {
         operator: Name,
-        predicates: Vec<CfgPredicate>,
+        predicates: Vec<Self>,
         span: Span,
     },
 }
 
 impl CfgPredicate {
-    pub fn span(&self) -> Span {
+    pub const fn span(&self) -> Span {
         match self {
             Self::NameValue { span, .. } | Self::Call { span, .. } => *span,
         }

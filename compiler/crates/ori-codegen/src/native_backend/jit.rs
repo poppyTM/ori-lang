@@ -622,7 +622,7 @@ impl JitManagedValueOwner {
     pub unsafe fn take_bytes(&self, pointer: *const u8) -> Result<Vec<u8>, String> {
         let length = unsafe { self.bytes_len(pointer) };
         let result = match length {
-            Some(length) if length <= isize::MAX as usize && !pointer.is_null() => {
+            Some(length) if isize::try_from(length).is_ok() && !pointer.is_null() => {
                 // SAFETY: the runtime registry supplied the exact live length.
                 Ok(unsafe { std::slice::from_raw_parts(pointer, length) }.to_vec())
             }
@@ -667,7 +667,7 @@ impl JitManagedValueOwner {
         if !pointer.is_null() {
             // SAFETY: caller guarantees the pointer is a live runtime value;
             // the function pointer comes from the retained runtime library.
-            unsafe { (self.api.retain)(pointer as *mut u8) };
+            unsafe { (self.api.retain)(pointer.cast_mut()) };
         }
     }
 
@@ -680,7 +680,7 @@ impl JitManagedValueOwner {
     pub unsafe fn release(&self, pointer: *const u8) {
         if !pointer.is_null() {
             // SAFETY: caller guarantees the ownership count is balanced.
-            unsafe { (self.api.release)(pointer as *mut u8) };
+            unsafe { (self.api.release)(pointer.cast_mut()) };
         }
     }
 
@@ -995,7 +995,7 @@ impl CompiledJitModule {
     }
 }
 
-fn scalar_type_for(ty: &ori_types::Ty) -> JitScalarType {
+const fn scalar_type_for(ty: &ori_types::Ty) -> JitScalarType {
     match ty {
         ori_types::Ty::Bool => JitScalarType::Bool,
         ori_types::Ty::Int => JitScalarType::Int,
@@ -1019,7 +1019,7 @@ fn signature_for(function: &HirFunc) -> JitFunctionSignature {
     }
 }
 
-fn value_type(value: JitValue) -> JitScalarType {
+const fn value_type(value: JitValue) -> JitScalarType {
     match value {
         JitValue::Bool(_) => JitScalarType::Bool,
         JitValue::Int(_) => JitScalarType::Int,
@@ -1335,7 +1335,7 @@ fn runtime_symbol_lookup(
             // SAFETY: lookup only obtains the symbol address; the generated
             // call site supplies the symbol's ABI declared by the compiler.
             if let Ok(sym) = lib.0.get::<unsafe extern "C" fn()>(name.as_bytes()) {
-                return Some(*sym as *const () as *const u8);
+                return Some((*sym as *const ()).cast::<u8>());
             }
         }
         host_addresses
@@ -1394,7 +1394,7 @@ pub fn run_jit_with_args(
     let lookup: Box<RuntimeSymbolLookup> = Box::new(move |name: &str| unsafe {
         for lib in &send_libs {
             if let Ok(sym) = lib.0.get::<unsafe extern "C" fn()>(name.as_bytes()) {
-                return Some(*sym as *const () as *const u8);
+                return Some((*sym as *const ()).cast::<u8>());
             }
         }
         None
@@ -1437,7 +1437,7 @@ pub fn run_jit_with_args(
         .collect();
     let mut c_ptrs: Vec<*mut std::ffi::c_char> = c_args
         .iter()
-        .map(|c_str| c_str.as_ptr() as *mut std::ffi::c_char)
+        .map(|c_str| c_str.as_ptr().cast_mut())
         .collect();
     c_ptrs.push(std::ptr::null_mut());
 

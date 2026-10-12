@@ -137,7 +137,7 @@ fn try_rewrite_at(stmts: &mut [HirStmt], i: usize) -> bool {
         let replacement = make_sum_closed_form(
             &s_name,
             &i_name,
-            n_expr.clone(),
+            n_expr,
             *while_span,
             s_span,
             i_span,
@@ -168,7 +168,7 @@ fn try_rewrite_at(stmts: &mut [HirStmt], i: usize) -> bool {
                             let replacement = make_nested_closed_form(
                                 &s_name,
                                 &i_name,
-                                n_expr.clone(),
+                                n_expr,
                                 *while_span,
                                 s_span,
                                 i_span,

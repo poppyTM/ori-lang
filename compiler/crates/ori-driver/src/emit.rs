@@ -9,7 +9,7 @@ const RESET: &str = "\x1b[0m";
 
 /// Return `s` if color is enabled, else `""`. All ANSI codes are `&'static str`.
 #[inline]
-fn c(use_color: bool, s: &'static str) -> &'static str {
+const fn c(use_color: bool, s: &'static str) -> &'static str {
     if use_color {
         s
     } else {
@@ -48,7 +48,7 @@ fn render_one(cache: &SourceCache, diag: &Diagnostic, color: bool) {
         if let Some(file) = cache.get(label.file_id) {
             let (line, col) = file.line_col(label.span.start);
             let line_text = file.line_text(line);
-            let line_num = format!("{}", line);
+            let line_num = format!("{line}");
             let gutter = " ".repeat(line_num.len());
 
             eprintln!(

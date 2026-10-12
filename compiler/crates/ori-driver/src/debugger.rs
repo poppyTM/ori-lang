@@ -77,7 +77,7 @@ fn terminal_session(
     let mut input = String::new();
     let mut hello_seen = false;
 
-    eprintln!("ori debug: connected; breakpoints={:?}", breakpoints);
+    eprintln!("ori debug: connected; breakpoints={breakpoints:?}");
     loop {
         input.clear();
         match reader.read_line(&mut input) {
@@ -192,8 +192,7 @@ fn print_stopped(event: &Value) {
             let name = variable.get("name").and_then(Value::as_str).unwrap_or("?");
             let value = variable
                 .get("value")
-                .map(Value::to_string)
-                .unwrap_or_else(|| "?".to_string());
+                .map_or_else(|| "?".to_string(), Value::to_string);
             eprintln!("  {name} = {value}");
         }
     }
@@ -490,7 +489,7 @@ fn handle_dap_request<W: Write>(
                 .unwrap_or_default();
             if let Some(path) = source_path {
                 let key = normalize_path(&path);
-                breakpoints.insert(key.clone(), lines.clone());
+                breakpoints.insert(key, lines.clone());
                 if let Some(active) = session.as_ref() {
                     active.send(json!({
                         "type": "setBreakpoints",
@@ -647,8 +646,7 @@ fn handle_dap_request<W: Write>(
                             };
                             let value = variable
                                 .get("value")
-                                .map(Value::to_string)
-                                .unwrap_or_else(|| "<unavailable>".to_string());
+                                .map_or_else(|| "<unavailable>".to_string(), Value::to_string);
                             let child_reference = list_references
                                 .iter()
                                 .find_map(|(reference, candidate)| {
@@ -782,7 +780,7 @@ enum DebugEvalValue {
 }
 
 impl DebugEvalValue {
-    fn type_name(&self) -> &'static str {
+    const fn type_name(&self) -> &'static str {
         match self {
             Self::Integer(_) => "int",
             Self::Float(_) => "float",
@@ -805,8 +803,7 @@ impl DebugEvalValue {
 fn evaluate_debug_expression(event: &Value, expression: &str) -> Result<DebugEvalValue, String> {
     if expression.len() > DAP_MAX_EVALUATE_LENGTH {
         return Err(format!(
-            "expression exceeds the {}-byte limit",
-            DAP_MAX_EVALUATE_LENGTH
+            "expression exceeds the {DAP_MAX_EVALUATE_LENGTH}-byte limit"
         ));
     }
     let variables = event
@@ -924,10 +921,8 @@ fn tokenize_debug_expression(expression: &str) -> Result<Vec<DebugEvalToken>, St
             continue;
         }
         let operator = if cursor + 1 < bytes.len()
-            && matches!(
-                (byte, bytes[cursor + 1]),
-                (b'=', b'=') | (b'!', b'=') | (b'<', b'=') | (b'>', b'=')
-            ) {
+            && matches!((byte, bytes[cursor + 1]), (b'=' | b'!' | b'<' | b'>', b'='))
+        {
             let value = expression[cursor..cursor + 2].to_string();
             cursor += 2;
             value
@@ -949,7 +944,7 @@ struct DebugExpressionParser<'a> {
     variables: &'a [Value],
 }
 
-impl<'a> DebugExpressionParser<'a> {
+impl DebugExpressionParser<'_> {
     fn peek(&self) -> &DebugEvalToken {
         self.tokens.get(self.cursor).unwrap_or(&DebugEvalToken::End)
     }
@@ -1273,7 +1268,7 @@ enum NumericValue {
 }
 
 impl NumericValue {
-    fn as_f64(self) -> f64 {
+    const fn as_f64(self) -> f64 {
         match self {
             Self::Integer(value) => value as f64,
             Self::Float(value) => value,
@@ -1369,7 +1364,7 @@ fn runtime_bridge(
     loop {
         while let Ok(command) = commands.try_recv() {
             if writeln!(stream, "{command}")
-                .and_then(|_| stream.flush())
+                .and_then(|()| stream.flush())
                 .is_err()
             {
                 let _ = events.send(RuntimeMessage::Closed);
@@ -1414,7 +1409,6 @@ fn compile_instrumented(file: &Path, executable: &Path, native_raw: bool) -> Res
             lib: false,
         },
     )
-    .map_err(|error| error.to_string())
     .and_then(|out| {
         if out.has_errors {
             Err("debug target contains compilation errors".to_string())
@@ -1441,8 +1435,7 @@ fn temporary_debug_executable(file: &Path) -> PathBuf {
         .unwrap_or("app");
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
-        .unwrap_or(0);
+        .map_or(0, |duration| duration.as_millis());
     let suffix = if cfg!(windows) { ".exe" } else { "" };
     std::env::temp_dir().join(format!(
         "ori-debug-{stem}-{}-{millis}{suffix}",
@@ -1546,14 +1539,14 @@ fn write_dap_message<W: Write>(output: &mut W, message: &Value) -> Result<(), St
     let payload =
         serde_json::to_vec(message).map_err(|error| format!("encode DAP message: {error}"))?;
     write!(output, "Content-Length: {}\r\n\r\n", payload.len())
-        .and_then(|_| output.write_all(&payload))
-        .and_then(|_| output.flush())
+        .and_then(|()| output.write_all(&payload))
+        .and_then(|()| output.flush())
         .map_err(|error| format!("write DAP message: {error}"))
 }
 
 fn send_runtime(stream: &mut TcpStream, message: Value) -> Result<(), String> {
     writeln!(stream, "{message}")
-        .and_then(|_| stream.flush())
+        .and_then(|()| stream.flush())
         .map_err(|error| format!("send debugger command: {error}"))
 }
 

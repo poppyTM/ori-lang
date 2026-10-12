@@ -8,7 +8,9 @@
 
 use smol_str::SmolStr;
 
-use ori_hir::hir::*;
+use ori_hir::hir::{
+    HirBlock, HirExpr, HirExprKind, HirLValue, HirModule, HirPattern, HirStmt, HirStrPart,
+};
 
 struct StringCollector {
     out: Vec<SmolStr>,

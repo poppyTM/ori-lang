@@ -10,7 +10,11 @@ use cranelift_object::{ObjectBuilder, ObjectModule};
 
 use ori_ast::expr::{BinaryOp, UnaryOp};
 use ori_diagnostics::Span;
-use ori_hir::hir::*;
+use ori_hir::hir::{
+    HirArg, HirArm, HirBlock, HirClosureCapture, HirExpr, HirExprArm, HirExprKind, HirExtern,
+    HirField, HirFunc, HirLValue, HirListElement, HirModule, HirParam, HirPattern, HirStmt,
+    HirStrPart, HirTrait, HirTraitImpl,
+};
 use ori_types::{
     stdlib::{stdlib_func_sig, stdlib_native_abi, stdlib_runtime_functions, StdlibNativeAbiTy},
     substitute_ty_params, OpaqueTy, Ty,
@@ -295,7 +299,7 @@ fn custom_destructor_impls(hir: &HirModule) -> Vec<(ori_types::DefId, SmolStr)> 
         .collect()
 }
 
-fn cl_stdlib_abi_type(ty: StdlibNativeAbiTy, ptr_ty: types::Type) -> types::Type {
+const fn cl_stdlib_abi_type(ty: StdlibNativeAbiTy, ptr_ty: types::Type) -> types::Type {
     match ty {
         StdlibNativeAbiTy::Ptr => ptr_ty,
         StdlibNativeAbiTy::I64 => types::I64,
@@ -309,7 +313,7 @@ fn is_managed_ty(ty: &Ty) -> bool {
     ty.is_runtime_managed()
 }
 
-fn debug_scalar_type_tag(ty: &Ty) -> Option<i64> {
+const fn debug_scalar_type_tag(ty: &Ty) -> Option<i64> {
     match ty {
         Ty::Bool => Some(DEBUG_TYPE_BOOL),
         Ty::Int | Ty::Int8 | Ty::Int16 | Ty::Int32 | Ty::Int64 => Some(DEBUG_TYPE_INT),
@@ -617,7 +621,7 @@ fn collect_debug_enum_field_paths(hir: &HirModule) -> Vec<SmolStr> {
         .collect()
 }
 
-fn is_c_export_scalar_field_ty(ty: &Ty) -> bool {
+const fn is_c_export_scalar_field_ty(ty: &Ty) -> bool {
     matches!(
         ty,
         Ty::Bool
@@ -743,7 +747,7 @@ struct StringParts {
 
 fn const_static_bytes(expr: &HirExpr, ty: &Ty) -> Option<Vec<u8>> {
     match (&expr.kind, ty) {
-        (HirExprKind::BoolLit(value), Ty::Bool) => Some(vec![if *value { 1 } else { 0 }]),
+        (HirExprKind::BoolLit(value), Ty::Bool) => Some(vec![u8::from(*value)]),
         (HirExprKind::IntLit(value), Ty::Int8 | Ty::U8) => Some(vec![*value as u8]),
         (HirExprKind::IntLit(value), Ty::Int16 | Ty::U16) => {
             Some((*value as i16).to_le_bytes().to_vec())
@@ -1363,7 +1367,7 @@ const ASYNC_FRAME_RESULT_OFFSET: i32 = 8;
 const ASYNC_FRAME_AWAITED_BASE_OFFSET: u32 = 16;
 
 fn align_u32(value: u32, align: u8) -> u32 {
-    let align = align.max(1) as u32;
+    let align = u32::from(align.max(1));
     (value + align - 1) & !(align - 1)
 }
 
@@ -1865,7 +1869,7 @@ fn stmt_collect_var_uses(stmt: &HirStmt, uses: &mut HashSet<SmolStr>) {
             expr_collect_var_uses(value, uses);
         }
         HirStmt::Return(Some(value), _) | HirStmt::Expr(value) => {
-            expr_collect_var_uses(value, uses)
+            expr_collect_var_uses(value, uses);
         }
         HirStmt::Return(None, _) | HirStmt::Break(_) | HirStmt::Continue(_) => {}
         HirStmt::If {
@@ -2670,7 +2674,9 @@ fn simple_async_state_machine_plan(f: &HirFunc) -> Option<SimpleAsyncStateMachin
             continue;
         }
 
-        if !saw_await {
+        if saw_await {
+            tail_stmts.push(stmt.clone());
+        } else {
             match stmt {
                 HirStmt::Let {
                     name, ty, value, ..
@@ -2687,8 +2693,6 @@ fn simple_async_state_machine_plan(f: &HirFunc) -> Option<SimpleAsyncStateMachin
                 }
                 _ => return None,
             }
-        } else {
-            tail_stmts.push(stmt.clone());
         }
     }
 
@@ -2850,53 +2854,50 @@ impl GeneralAsyncCollector {
                             value: dummy.clone(),
                         });
                     }
-                    match &iterable.ty {
-                        Ty::Range(..) => {
+                    if let Ty::Range(..) = &iterable.ty {
+                        self.locals.push(SimpleAsyncLocal {
+                            name: SmolStr::new(format!(".__loop_idx_{loop_id}")),
+                            ty: Ty::Int,
+                            value: dummy.clone(),
+                        });
+                        self.locals.push(SimpleAsyncLocal {
+                            name: SmolStr::new(format!(".__loop_end_{loop_id}")),
+                            ty: Ty::Int,
+                            value: dummy.clone(),
+                        });
+                        self.locals.push(SimpleAsyncLocal {
+                            name: SmolStr::new(format!(".__loop_asc_{loop_id}")),
+                            ty: Ty::Bool,
+                            value: dummy.clone(),
+                        });
+                        if index_binding.is_some() {
                             self.locals.push(SimpleAsyncLocal {
-                                name: SmolStr::new(format!(".__loop_idx_{}", loop_id)),
-                                ty: Ty::Int,
-                                value: dummy.clone(),
-                            });
-                            self.locals.push(SimpleAsyncLocal {
-                                name: SmolStr::new(format!(".__loop_end_{}", loop_id)),
-                                ty: Ty::Int,
-                                value: dummy.clone(),
-                            });
-                            self.locals.push(SimpleAsyncLocal {
-                                name: SmolStr::new(format!(".__loop_asc_{}", loop_id)),
-                                ty: Ty::Bool,
-                                value: dummy.clone(),
-                            });
-                            if index_binding.is_some() {
-                                self.locals.push(SimpleAsyncLocal {
-                                    name: SmolStr::new(format!(".__loop_iter_{}", loop_id)),
-                                    ty: Ty::Int,
-                                    value: dummy,
-                                });
-                            }
-                        }
-                        _ => {
-                            self.locals.push(SimpleAsyncLocal {
-                                name: SmolStr::new(format!(".__loop_idx_{}", loop_id)),
-                                ty: Ty::Int,
-                                value: dummy.clone(),
-                            });
-                            self.locals.push(SimpleAsyncLocal {
-                                name: SmolStr::new(format!(".__loop_len_{}", loop_id)),
-                                ty: Ty::Int,
-                                value: dummy.clone(),
-                            });
-                            self.locals.push(SimpleAsyncLocal {
-                                name: SmolStr::new(format!(".__loop_list_{}", loop_id)),
-                                ty: iterable.ty.clone(),
-                                value: dummy.clone(),
-                            });
-                            self.locals.push(SimpleAsyncLocal {
-                                name: SmolStr::new(format!(".__loop_version_{}", loop_id)),
+                                name: SmolStr::new(format!(".__loop_iter_{loop_id}")),
                                 ty: Ty::Int,
                                 value: dummy,
                             });
                         }
+                    } else {
+                        self.locals.push(SimpleAsyncLocal {
+                            name: SmolStr::new(format!(".__loop_idx_{loop_id}")),
+                            ty: Ty::Int,
+                            value: dummy.clone(),
+                        });
+                        self.locals.push(SimpleAsyncLocal {
+                            name: SmolStr::new(format!(".__loop_len_{loop_id}")),
+                            ty: Ty::Int,
+                            value: dummy.clone(),
+                        });
+                        self.locals.push(SimpleAsyncLocal {
+                            name: SmolStr::new(format!(".__loop_list_{loop_id}")),
+                            ty: iterable.ty.clone(),
+                            value: dummy.clone(),
+                        });
+                        self.locals.push(SimpleAsyncLocal {
+                            name: SmolStr::new(format!(".__loop_version_{loop_id}")),
+                            ty: Ty::Int,
+                            value: dummy,
+                        });
                     }
                 }
                 self.collect_expr(iterable);
@@ -2916,12 +2917,12 @@ impl GeneralAsyncCollector {
                         span: *span,
                     };
                     self.locals.push(SimpleAsyncLocal {
-                        name: SmolStr::new(format!(".__loop_idx_{}", loop_id)),
+                        name: SmolStr::new(format!(".__loop_idx_{loop_id}")),
                         ty: Ty::Int,
                         value: dummy.clone(),
                     });
                     self.locals.push(SimpleAsyncLocal {
-                        name: SmolStr::new(format!(".__loop_limit_{}", loop_id)),
+                        name: SmolStr::new(format!(".__loop_limit_{loop_id}")),
                         ty: Ty::Int,
                         value: dummy,
                     });
@@ -3170,8 +3171,9 @@ fn collect_general_async_plan(f: &HirFunc) -> Option<SimpleAsyncStateMachinePlan
 fn optional_layout(inner: &Ty, ptr_ty: types::Type) -> (u32, u32) {
     // Returns (value_offset, total_size)
     let (val_size, val_align) = field_size_align(inner, ptr_ty);
-    let val_offset = (1u32 + val_align as u32 - 1) & !(val_align as u32 - 1);
-    let total = ((val_offset + val_size + val_align as u32 - 1) & !(val_align as u32 - 1)).max(2);
+    let val_offset = (1u32 + u32::from(val_align) - 1) & !(u32::from(val_align) - 1);
+    let total =
+        ((val_offset + val_size + u32::from(val_align) - 1) & !(u32::from(val_align) - 1)).max(2);
     (val_offset, total)
 }
 
@@ -3182,8 +3184,9 @@ fn result_layout(ok: &Ty, err: &Ty, ptr_ty: types::Type) -> (u32, u32, u32) {
     let (err_size, err_align) = field_size_align(err, ptr_ty);
     let pay_align = ok_align.max(err_align);
     let pay_size = ok_size.max(err_size);
-    let pay_offset = (1u32 + pay_align as u32 - 1) & !(pay_align as u32 - 1);
-    let total = ((pay_offset + pay_size + pay_align as u32 - 1) & !(pay_align as u32 - 1)).max(2);
+    let pay_offset = (1u32 + u32::from(pay_align) - 1) & !(u32::from(pay_align) - 1);
+    let total =
+        ((pay_offset + pay_size + u32::from(pay_align) - 1) & !(u32::from(pay_align) - 1)).max(2);
     (pay_offset, ok_size, total)
 }
 
@@ -3191,9 +3194,9 @@ fn result_layout(ok: &Ty, err: &Ty, ptr_ty: types::Type) -> (u32, u32, u32) {
 fn lazy_layout(inner: &Ty, ptr_ty: types::Type) -> (u32, u32) {
     let ptr_size = ptr_ty.bytes();
     let (val_size, val_align) = field_size_align(inner, ptr_ty);
-    let val_offset = (ptr_size + 1 + val_align as u32 - 1) & !(val_align as u32 - 1);
+    let val_offset = (ptr_size + 1 + u32::from(val_align) - 1) & !(u32::from(val_align) - 1);
     let max_align = (ptr_ty.bytes() as u8).max(val_align).max(1);
-    let total = ((val_offset + val_size + max_align as u32 - 1) & !(max_align as u32 - 1))
+    let total = ((val_offset + val_size + u32::from(max_align) - 1) & !(u32::from(max_align) - 1))
         .max(ptr_size + 1);
     (val_offset, total)
 }
@@ -3234,7 +3237,7 @@ fn field_size_align(ty: &Ty, ptr_ty: types::Type) -> (u32, u8) {
     }
     if let Ty::Simd(elem, lanes) = ty {
         let (elem_size, _) = field_size_align(elem, ptr_ty);
-        let size = elem_size.saturating_mul(*lanes as u32);
+        let size = elem_size.saturating_mul(u32::from(*lanes));
         let align = size.min(16).clamp(1, 16) as u8;
         return (size, align);
     }
@@ -3251,7 +3254,7 @@ fn tuple_layout(elems: &[Ty], ptr_ty: types::Type) -> (Vec<(u32, Ty)>, u32, u8) 
 
     for ty in elems {
         let (size, align) = field_size_align(ty, ptr_ty);
-        let aligned = (offset + align as u32 - 1) & !(align as u32 - 1);
+        let aligned = (offset + u32::from(align) - 1) & !(u32::from(align) - 1);
         fields.push((aligned, ty.clone()));
         offset = aligned + size;
         if align > max_align {
@@ -3259,7 +3262,7 @@ fn tuple_layout(elems: &[Ty], ptr_ty: types::Type) -> (Vec<(u32, Ty)>, u32, u8) 
         }
     }
 
-    let total = ((offset + max_align as u32 - 1) & !(max_align as u32 - 1)).max(1);
+    let total = ((offset + u32::from(max_align) - 1) & !(u32::from(max_align) - 1)).max(1);
     (fields, total, max_align)
 }
 
@@ -3270,7 +3273,7 @@ fn closure_env_layout(captures: &[HirClosureCapture], ptr_ty: types::Type) -> (V
 
     for capture in captures {
         let (size, align) = field_size_align(&capture.ty, ptr_ty);
-        let aligned = (offset + align as u32 - 1) & !(align as u32 - 1);
+        let aligned = (offset + u32::from(align) - 1) & !(u32::from(align) - 1);
         offsets.push(aligned);
         offset = aligned + size;
         if align > max_align {
@@ -3281,7 +3284,7 @@ fn closure_env_layout(captures: &[HirClosureCapture], ptr_ty: types::Type) -> (V
     let total = if captures.is_empty() {
         0
     } else {
-        ((offset + max_align as u32 - 1) & !(max_align as u32 - 1)).max(1)
+        ((offset + u32::from(max_align) - 1) & !(u32::from(max_align) - 1)).max(1)
     };
     (offsets, total)
 }
@@ -3310,14 +3313,14 @@ fn compute_struct_layout_with(
     inline_struct_ids: &HashSet<ori_types::DefId>,
 ) -> StructLayout {
     let mut offset = 0u32;
-    let mut max_align = explicit_align.map(|a| a as u8).unwrap_or(1);
+    let mut max_align = explicit_align.map_or(1, |a| a as u8);
     let mut result = Vec::new();
     for f in fields {
         let (size, align) =
             field_size_align_with_layouts_typed(&f.ty, ptr_ty, struct_layouts, inline_struct_ids);
         // For repr(C), use natural alignment; for packed, skip alignment
         let aligned = if repr_c {
-            (offset + align as u32 - 1) & !(align as u32 - 1)
+            (offset + u32::from(align) - 1) & !(u32::from(align) - 1)
         } else {
             offset
         };
@@ -3336,7 +3339,7 @@ fn compute_struct_layout_with(
     }
     // Pad total to struct alignment (only for repr(C))
     let total = if repr_c {
-        ((offset + max_align as u32 - 1) & !(max_align as u32 - 1)).max(1)
+        ((offset + u32::from(max_align) - 1) & !(u32::from(max_align) - 1)).max(1)
     } else {
         offset.max(1)
     };
@@ -3836,11 +3839,11 @@ fn compute_enum_layout(variants: &[ori_hir::hir::HirVariant], ptr_ty: types::Typ
 
     let overall_align = tag_align.max(max_payload_align);
     let payload_offset =
-        (tag_size + max_payload_align as u32 - 1) & !(max_payload_align as u32 - 1);
+        (tag_size + u32::from(max_payload_align) - 1) & !(u32::from(max_payload_align) - 1);
 
     // Total size padded to overall alignment
-    let total = ((payload_offset + max_payload_size + overall_align as u32 - 1)
-        & !(overall_align as u32 - 1))
+    let total = ((payload_offset + max_payload_size + u32::from(overall_align) - 1)
+        & !(u32::from(overall_align) - 1))
         .max(tag_size);
 
     EnumLayout {
@@ -3948,7 +3951,7 @@ pub struct NativeBackend<M: Module> {
     /// Hidden callback IDs inserted before arguments for trusted hosted
     /// `extern host` callback imports.
     host_callback_ids: HashMap<SmolStr, u64>,
-    /// Cooperative line debugger (ORI_DEBUG_INSTRUMENT=1 + ORI_DEBUG_SOURCE).
+    /// Cooperative line debugger (`ORI_DEBUG_INSTRUMENT=1` + `ORI_DEBUG_SOURCE`).
     debug_source_path: Option<String>,
     debug_line_starts: Vec<u32>,
     debug_path_data: Option<DataId>,
@@ -3999,7 +4002,7 @@ impl<M: Module> NativeBackend<M> {
     }
 
     /// Enable recoverable trap lowering for a host-owned JIT module.
-    pub fn set_hosted_traps(&mut self, enabled: bool) {
+    pub const fn set_hosted_traps(&mut self, enabled: bool) {
         self.hosted_traps = enabled;
     }
 
@@ -4098,7 +4101,7 @@ impl<M: Module> NativeBackend<M> {
 
     /// Returns the `FuncId` of the exported C `main` wrapper, or `None` if the
     /// HIR has no entry `main`.
-    pub fn main_func_id(&self) -> Option<FuncId> {
+    pub const fn main_func_id(&self) -> Option<FuncId> {
         self.main_func_id
     }
 
@@ -4106,12 +4109,12 @@ impl<M: Module> NativeBackend<M> {
     ///
     /// JIT owners must invoke this exactly once after definitions are
     /// finalized and before exposing any function from the generation.
-    pub fn global_init_func_id(&self) -> Option<FuncId> {
+    pub const fn global_init_func_id(&self) -> Option<FuncId> {
         self.global_init_func_id
     }
 
     /// Returns the teardown function paired with `global_init_func_id`.
-    pub fn global_drop_func_id(&self) -> Option<FuncId> {
+    pub const fn global_drop_func_id(&self) -> Option<FuncId> {
         self.global_drop_func_id
     }
 
@@ -4195,7 +4198,7 @@ impl<M: Module> NativeBackend<M> {
             return Ok(());
         }
         let mut names = collect_debug_names(hir).into_iter().collect::<Vec<_>>();
-        names.sort_unstable_by_key(|name| name.clone());
+        names.sort_unstable_by_key(std::clone::Clone::clone);
         for name in names {
             let mut bytes = name.as_bytes().to_vec();
             bytes.push(0);
@@ -4252,7 +4255,7 @@ impl<M: Module> NativeBackend<M> {
     }
 
     /// Declare C library / runtime functions used by the stdlib mapping.
-    /// FuncId index → ARC runtime symbol, for `ORI_DUMP_ARC` (LANG-MEM-7).
+    /// `FuncId` index → ARC runtime symbol, for `ORI_DUMP_ARC` (LANG-MEM-7).
     /// Returns an empty map when the env var is unset so the per-function
     /// call stays free in normal builds.
     fn arc_dump_symbols(&self) -> HashMap<u32, &'static str> {
@@ -5968,7 +5971,7 @@ impl<M: Module> NativeBackend<M> {
                     let id = self
                         .module
                         .declare_function(name, Linkage::Import, &sig)
-                        .map_err(|e| format!("declare extern '{}': {e}", name))?;
+                        .map_err(|e| format!("declare extern '{name}': {e}"))?;
 
                     self.func_ids.insert(path.clone(), id);
                     self.func_param_tys.insert(
@@ -5987,7 +5990,7 @@ impl<M: Module> NativeBackend<M> {
                     let data_id = self
                         .module
                         .declare_data(name, Linkage::Import, false, false)
-                        .map_err(|e| format!("declare extern variable '{}': {e}", name))?;
+                        .map_err(|e| format!("declare extern variable '{name}': {e}"))?;
                     self.global_data.insert(
                         path.clone(),
                         GlobalDataInfo {
@@ -6009,7 +6012,7 @@ impl<M: Module> NativeBackend<M> {
                 let id = self
                     .module
                     .declare_function(&native_func_symbol(&step_name), Linkage::Local, &sig)
-                    .map_err(|e| format!("declare async step '{}': {e}", step_name))?;
+                    .map_err(|e| format!("declare async step '{step_name}': {e}"))?;
                 self.func_ids.insert(step_name, id);
             }
         }
@@ -6276,8 +6279,7 @@ impl<M: Module> NativeBackend<M> {
             let debug_file_len = if instrument_debug {
                 self.debug_source_path
                     .as_ref()
-                    .map(|s| s.len() as u32)
-                    .unwrap_or(0)
+                    .map_or(0, |s| s.len() as u32)
             } else {
                 0
             };
@@ -7129,7 +7131,7 @@ impl<M: Module> NativeBackend<M> {
 
         self.module
             .define_function(func_id, &mut ctx)
-            .map_err(|e| format!("define equality helper '{}': {e}", name))?;
+            .map_err(|e| format!("define equality helper '{name}': {e}"))?;
         Ok(())
     }
 
@@ -7315,8 +7317,7 @@ impl<M: Module> NativeBackend<M> {
         let debug_file_len = if instrument_debug {
             self.debug_source_path
                 .as_ref()
-                .map(|s| s.len() as u32)
-                .unwrap_or(0)
+                .map_or(0, |s| s.len() as u32)
         } else {
             0
         };
@@ -7397,9 +7398,9 @@ impl<M: Module> NativeBackend<M> {
             .define_function(func_id, &mut ctx)
             .map_err(|e| {
                 if std::env::var("ORI_DUMP_CLIF").is_ok() {
-                    format!("define async step '{}': {e} ({e:?})", step_name)
+                    format!("define async step '{step_name}': {e} ({e:?})")
                 } else {
-                    format!("define async step '{}': {e}", step_name)
+                    format!("define async step '{step_name}': {e}")
                 }
             })?;
         Ok(())
@@ -7683,7 +7684,8 @@ impl<'a> FuncCodegen<'a> {
                         ));
                     }
                     if matches!(field.ty, Ty::Named(..)) || matches!(field.ty, Ty::Array(..)) {
-                        let sub_source = self.builder.ins().iadd_imm(source, field.offset as i64);
+                        let sub_source =
+                            self.builder.ins().iadd_imm(source, i64::from(field.offset));
                         self.emit_copy_inline_into(
                             sub_source,
                             &field.ty,
@@ -7722,7 +7724,7 @@ impl<'a> FuncCodegen<'a> {
                 if elem_inline {
                     for i in 0..*len {
                         let byte = (i as u32).saturating_mul(elem_size) as i32;
-                        let sub_source = self.builder.ins().iadd_imm(source, byte as i64);
+                        let sub_source = self.builder.ins().iadd_imm(source, i64::from(byte));
                         self.emit_copy_inline_into(
                             sub_source,
                             elem_ty,
@@ -7881,15 +7883,14 @@ impl<'a> FuncCodegen<'a> {
             OpaqueTy::DoublyLinkedList => "ori_doubly_linked_list_to_list",
             _ => {
                 return Err(format!(
-                    "unsupported opaque collection for equality: {:?}",
-                    kind
+                    "unsupported opaque collection for equality: {kind:?}"
                 ))
             }
         };
         let to_list_ref = *self
             .func_refs
             .get(to_list_fn_name)
-            .ok_or_else(|| format!("missing runtime function `{}`", to_list_fn_name))?;
+            .ok_or_else(|| format!("missing runtime function `{to_list_fn_name}`"))?;
 
         // Convert both collections to lists
         let left_list_call = self.builder.ins().call(to_list_ref, &[lv]);
@@ -7983,14 +7984,14 @@ impl<'a> FuncCodegen<'a> {
                 .builder
                 .ins()
                 .load(cl_ty, MemFlags::new(), frame, offset as i32);
-            let var = self
-                .lookup_var(&param.name)
-                .map(|(var, _)| var)
-                .unwrap_or_else(|| {
+            let var = self.lookup_var(&param.name).map_or_else(
+                || {
                     let var = self.builder.declare_var(cl_ty);
                     self.insert_var(param.name.clone(), (var, param.ty.clone()));
                     var
-                });
+                },
+                |(var, _)| var,
+            );
             self.builder.def_var(var, value);
         }
 
@@ -8003,14 +8004,14 @@ impl<'a> FuncCodegen<'a> {
                 .builder
                 .ins()
                 .load(cl_ty, MemFlags::new(), frame, offset as i32);
-            let var = self
-                .lookup_var(&local.name)
-                .map(|(var, _)| var)
-                .unwrap_or_else(|| {
+            let var = self.lookup_var(&local.name).map_or_else(
+                || {
                     let var = self.builder.declare_var(cl_ty);
                     self.insert_var(local.name.clone(), (var, local.ty.clone()));
                     var
-                });
+                },
+                |(var, _)| var,
+            );
             self.builder.def_var(var, value);
         }
 
@@ -8026,14 +8027,14 @@ impl<'a> FuncCodegen<'a> {
                 .builder
                 .ins()
                 .load(cl_ty, MemFlags::new(), frame, offset as i32);
-            let var = self
-                .lookup_var(&binding.name)
-                .map(|(var, _)| var)
-                .unwrap_or_else(|| {
+            let var = self.lookup_var(&binding.name).map_or_else(
+                || {
                     let var = self.builder.declare_var(cl_ty);
                     self.insert_var(binding.name.clone(), (var, binding.ty.clone()));
                     var
-                });
+                },
+                |(var, _)| var,
+            );
             self.builder.def_var(var, value);
         }
 
@@ -8458,9 +8459,8 @@ impl<'a> FuncCodegen<'a> {
                 let is_unsigned = matches!(expr.ty, Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64);
                 if is_unsigned {
                     return Ok(self.builder.ins().uextend(expected_ty, value));
-                } else {
-                    return Ok(self.builder.ins().sextend(expected_ty, value));
                 }
+                return Ok(self.builder.ins().sextend(expected_ty, value));
             }
         }
 
@@ -8480,7 +8480,7 @@ impl<'a> FuncCodegen<'a> {
         fref: ir::FuncRef,
         env_ptr: Option<ir::Value>,
     ) -> Result<ir::Value, String> {
-        let ptr_size = self.ptr_ty.bytes() as i64;
+        let ptr_size = i64::from(self.ptr_ty.bytes());
         let object = self.malloc_bytes((ptr_size * 2) as u32)?;
         let fn_ptr = self.builder.ins().func_addr(self.ptr_ty, fref);
         let env = env_ptr.unwrap_or_else(|| self.builder.ins().iconst(self.ptr_ty, 0));
@@ -8513,11 +8513,14 @@ impl<'a> FuncCodegen<'a> {
             })?
             .clone();
 
-        let ptr_size = self.ptr_ty.bytes() as i64;
+        let ptr_size = i64::from(self.ptr_ty.bytes());
         let vtable_size = (trait_layout.methods.len() as i64 + 2) * ptr_size;
         let vtable = self.malloc_bytes(vtable_size as u32)?;
 
-        let type_id_val = self.builder.ins().iconst(self.ptr_ty, type_def_id.0 as i64);
+        let type_id_val = self
+            .builder
+            .ins()
+            .iconst(self.ptr_ty, i64::from(type_def_id.0));
         self.builder
             .ins()
             .store(MemFlags::new(), type_id_val, vtable, 0);
@@ -8546,10 +8549,7 @@ impl<'a> FuncCodegen<'a> {
                 .or_else(|| method.default_func_name.clone())
                 .ok_or_else(|| format!("trait method `{}` has no implementation", method.name))?;
             let fref = *self.func_refs.get(func_name.as_str()).ok_or_else(|| {
-                format!(
-                    "missing function reference `{}` for trait dispatch",
-                    func_name
-                )
+                format!("missing function reference `{func_name}` for trait dispatch")
             })?;
             let fn_ptr = self.builder.ins().func_addr(self.ptr_ty, fref);
             self.builder.ins().store(
@@ -8605,7 +8605,7 @@ impl<'a> FuncCodegen<'a> {
             .builder
             .ins()
             .load(self.ptr_ty, MemFlags::new(), any_ptr, 0);
-        let ptr_size = self.ptr_ty.bytes() as i64;
+        let ptr_size = i64::from(self.ptr_ty.bytes());
         let vtable =
             self.builder
                 .ins()
@@ -8703,7 +8703,7 @@ impl<'a> FuncCodegen<'a> {
         let params = params.clone();
         let ret = *ret.clone();
         let closure = self.emit_expr(callee)?;
-        let ptr_size = self.ptr_ty.bytes() as i64;
+        let ptr_size = i64::from(self.ptr_ty.bytes());
         let fn_ptr = self
             .builder
             .ins()
@@ -9255,7 +9255,7 @@ impl<'a> FuncCodegen<'a> {
                     Ty::Array(elem_ty, _) => {
                         let idx = self.emit_expr(index)?;
                         let (elem_size, _) = self.field_size_align_for_layout(elem_ty);
-                        let stride = self.builder.ins().iconst(types::I64, elem_size as i64);
+                        let stride = self.builder.ins().iconst(types::I64, i64::from(elem_size));
                         let byte_offset = self.builder.ins().imul(idx, stride);
                         let offset = if self.ptr_ty == types::I64 {
                             byte_offset
@@ -9331,7 +9331,7 @@ impl<'a> FuncCodegen<'a> {
             .func_refs
             .get("ori_alloc_typed")
             .ok_or_else(|| "missing runtime function `ori_alloc_typed`".to_string())?;
-        let size_v = self.builder.ins().iconst(types::I64, size as i64);
+        let size_v = self.builder.ins().iconst(types::I64, i64::from(size));
         let dtor_v = match destructor {
             Some(destructor) => self.builder.ins().func_addr(self.ptr_ty, destructor),
             None => self.builder.ins().iconst(self.ptr_ty, 0),
@@ -9358,7 +9358,7 @@ impl<'a> FuncCodegen<'a> {
             .func_refs
             .get("ori_alloc")
             .ok_or_else(|| "missing runtime function `ori_alloc`".to_string())?;
-        let size_v = self.builder.ins().iconst(types::I64, size as i64);
+        let size_v = self.builder.ins().iconst(types::I64, i64::from(size));
         let dtor_v = match destructor {
             Some(destructor) => self.builder.ins().func_addr(self.ptr_ty, destructor),
             None => self.builder.ins().iconst(self.ptr_ty, 0),
@@ -9648,7 +9648,7 @@ impl<'a> FuncCodegen<'a> {
     /// binding whose +1 the return transfers to the caller) is skipped.
     fn emit_return_scope_cleanup(&mut self, transfer_var: Option<Variable>) -> Result<(), String> {
         self.emit_using_cleanup_calls_from(0)?;
-        let cleanups: Vec<ManagedCleanup> = self.managed_stack.to_vec();
+        let cleanups: Vec<ManagedCleanup> = self.managed_stack.clone();
         let mut transfer_pending = transfer_var;
         for cleanup in cleanups.iter().rev() {
             if transfer_pending == Some(cleanup.var) {
@@ -10028,7 +10028,7 @@ impl<'a> FuncCodegen<'a> {
     /// path must NOT add an extra retain — otherwise the value leaks because
     /// the temporary is never pushed to the managed stack and scope cleanup
     /// never releases the extra ref.
-    fn expr_produces_owned_ref(expr: &HirExpr) -> bool {
+    const fn expr_produces_owned_ref(expr: &HirExpr) -> bool {
         matches!(
             expr.kind,
             HirExprKind::StructLit { .. }
@@ -10128,7 +10128,7 @@ impl<'a> FuncCodegen<'a> {
             self.terminated = true;
             return Ok(());
         }
-        let return_expr_is_owned = val.map(Self::expr_produces_owned_ref).unwrap_or(false);
+        let return_expr_is_owned = val.is_some_and(Self::expr_produces_owned_ref);
         // Return-transfer elision (LANG-MEM-4): returning a managed local
         // hands the binding's own +1 to the caller instead of emitting a
         // retain (for the return) plus a release (frame cleanup) on the
@@ -11171,7 +11171,7 @@ impl<'a> FuncCodegen<'a> {
         let zero = self.builder.ins().iconst(types::I64, 0);
         self.builder.ins().return_(&[zero]);
 
-        for block in self.async_poll_blocks.iter() {
+        for block in &self.async_poll_blocks {
             let is_filled = self
                 .builder
                 .func
@@ -11231,7 +11231,7 @@ impl<'a> FuncCodegen<'a> {
         Ok(true)
     }
 
-    fn stmt_span(stmt: &HirStmt) -> Span {
+    const fn stmt_span(stmt: &HirStmt) -> Span {
         match stmt {
             HirStmt::Let { span, .. }
             | HirStmt::Assign { span, .. }
@@ -11331,7 +11331,7 @@ impl<'a> FuncCodegen<'a> {
         debug_scalar_type_tag(ty).is_none() && cl_type(ty, self.ptr_ty) == Some(self.ptr_ty)
     }
 
-    fn debug_managed_kind(ty: &Ty) -> Option<i64> {
+    const fn debug_managed_kind(ty: &Ty) -> Option<i64> {
         match ty {
             Ty::String => Some(DEBUG_MANAGED_STRING),
             Ty::Bytes => Some(DEBUG_MANAGED_BYTES),
@@ -11997,12 +11997,14 @@ impl<'a> FuncCodegen<'a> {
                     let var = self
                         .lookup_var(name)
                         .filter(|(_, existing_ty)| existing_ty == ty)
-                        .map(|(v, _)| v)
-                        .unwrap_or_else(|| {
-                            let v = self.builder.declare_var(cl_ty);
-                            self.insert_var(name.clone(), (v, ty.clone()));
-                            v
-                        });
+                        .map_or_else(
+                            || {
+                                let v = self.builder.declare_var(cl_ty);
+                                self.insert_var(name.clone(), (v, ty.clone()));
+                                v
+                            },
+                            |(v, _)| v,
+                        );
                     self.builder.def_var(var, val);
                     if is_managed_ty(ty) {
                         if !value_is_owned {
@@ -12079,7 +12081,7 @@ impl<'a> FuncCodegen<'a> {
                         // are copied recursively (GFX-INLINE-1).
                         let idx = self.emit_expr(index)?;
                         let (elem_size, _) = self.field_size_align_for_layout(&elem_ty);
-                        let stride = self.builder.ins().iconst(types::I64, elem_size as i64);
+                        let stride = self.builder.ins().iconst(types::I64, i64::from(elem_size));
                         let byte_offset = self.builder.ins().imul(idx, stride);
                         let offset = if self.ptr_ty == types::I64 {
                             byte_offset
@@ -12258,12 +12260,14 @@ impl<'a> FuncCodegen<'a> {
                     let var = self
                         .lookup_var(name)
                         .filter(|(_, existing_ty)| existing_ty == ty)
-                        .map(|(v, _)| v)
-                        .unwrap_or_else(|| {
-                            let v = self.builder.declare_var(cl_ty);
-                            self.insert_var(name.clone(), (v, ty.clone()));
-                            v
-                        });
+                        .map_or_else(
+                            || {
+                                let v = self.builder.declare_var(cl_ty);
+                                self.insert_var(name.clone(), (v, ty.clone()));
+                                v
+                            },
+                            |(v, _)| v,
+                        );
                     self.builder.def_var(var, val);
                     if is_managed_ty(ty) {
                         if !value_is_owned {
@@ -12312,8 +12316,8 @@ impl<'a> FuncCodegen<'a> {
                 let (idx_var, limit_val, repeat_loop_id) = if has_await {
                     let loop_id = self.async_loop_index;
                     self.async_loop_index += 1;
-                    let idx_name = SmolStr::new(format!(".__loop_idx_{}", loop_id));
-                    let limit_name = SmolStr::new(format!(".__loop_limit_{}", loop_id));
+                    let idx_name = SmolStr::new(format!(".__loop_idx_{loop_id}"));
+                    let limit_name = SmolStr::new(format!(".__loop_limit_{loop_id}"));
                     let (idx_var, _) = self.lookup_var(&idx_name).unwrap();
                     let (limit_var, _) = self.lookup_var(&limit_name).unwrap();
                     let loop_zero = self.builder.ins().iconst(types::I64, 0);
@@ -12355,7 +12359,7 @@ impl<'a> FuncCodegen<'a> {
                     let next = self.builder.ins().iadd(cur2, one);
                     self.builder.def_var(idx_var, next);
                     if let Some(loop_id) = repeat_loop_id {
-                        let idx_name = SmolStr::new(format!(".__loop_idx_{}", loop_id));
+                        let idx_name = SmolStr::new(format!(".__loop_idx_{loop_id}"));
                         self.store_async_local_if_any(&idx_name, next)?;
                     }
                     self.builder.ins().jump(header, &[]);
@@ -12477,14 +12481,14 @@ impl<'a> FuncCodegen<'a> {
             // a terminator, so continue on a fresh block for whatever follows
             // the loop.
             let was_break = self.broke_loop_target == Some(exit_blk);
-            if !was_break {
-                self.emit_unreachable_return()?;
-            } else {
+            if was_break {
                 let continue_block = self.builder.create_block();
                 self.builder.ins().jump(continue_block, &[]);
                 self.builder.seal_block(continue_block);
                 self.builder.switch_to_block(continue_block);
                 self.terminated = false;
+            } else {
+                self.emit_unreachable_return()?;
             }
         } else {
             self.terminated = false;
@@ -12510,14 +12514,14 @@ impl<'a> FuncCodegen<'a> {
         self.builder.switch_to_block(exit);
         if body_terminated {
             let was_break = self.broke_loop_target == Some(exit);
-            if !was_break {
-                self.emit_unreachable_return()?;
-            } else {
+            if was_break {
                 let continue_block = self.builder.create_block();
                 self.builder.ins().jump(continue_block, &[]);
                 self.builder.seal_block(continue_block);
                 self.builder.switch_to_block(continue_block);
                 self.terminated = false;
+            } else {
+                self.emit_unreachable_return()?;
             }
         } else {
             self.terminated = false;
@@ -12596,12 +12600,14 @@ impl<'a> FuncCodegen<'a> {
             let var = self
                 .lookup_var(binding)
                 .filter(|(_, existing_ty)| existing_ty == inner_ty)
-                .map(|(v, _)| v)
-                .unwrap_or_else(|| {
-                    let v = self.builder.declare_var(cl_ty);
-                    self.insert_var(binding.clone(), (v, inner_ty.clone()));
-                    v
-                });
+                .map_or_else(
+                    || {
+                        let v = self.builder.declare_var(cl_ty);
+                        self.insert_var(binding.clone(), (v, inner_ty.clone()));
+                        v
+                    },
+                    |(v, _)| v,
+                );
             self.builder.def_var(var, inner_val);
             if value_owned && is_managed_ty(inner_ty) {
                 self.emit_arc_retain_if_managed(inner_ty, inner_val)?;
@@ -12695,12 +12701,14 @@ impl<'a> FuncCodegen<'a> {
             let var = self
                 .lookup_var(binding)
                 .filter(|(_, existing_ty)| existing_ty == inner_ty)
-                .map(|(v, _)| v)
-                .unwrap_or_else(|| {
-                    let v = self.builder.declare_var(cl_ty);
-                    self.insert_var(binding.clone(), (v, inner_ty.clone()));
-                    v
-                });
+                .map_or_else(
+                    || {
+                        let v = self.builder.declare_var(cl_ty);
+                        self.insert_var(binding.clone(), (v, inner_ty.clone()));
+                        v
+                    },
+                    |(v, _)| v,
+                );
             self.builder.def_var(var, inner_val);
             self.store_async_local_if_any(binding, inner_val)?;
         }
@@ -12718,14 +12726,14 @@ impl<'a> FuncCodegen<'a> {
         self.builder.switch_to_block(exit_blk);
         if body_terminated {
             let was_break = self.broke_loop_target == Some(exit_blk);
-            if !was_break {
-                self.emit_unreachable_return()?;
-            } else {
+            if was_break {
                 let continue_block = self.builder.create_block();
                 self.builder.ins().jump(continue_block, &[]);
                 self.builder.seal_block(continue_block);
                 self.builder.switch_to_block(continue_block);
                 self.terminated = false;
+            } else {
+                self.emit_unreachable_return()?;
             }
         } else {
             self.terminated = false;
@@ -12873,8 +12881,8 @@ impl<'a> FuncCodegen<'a> {
             OpaqueTy::Graph => "ori_graph_iterator",
             _ => unreachable!(),
         };
-        let new_func = format!("{}_new", prefix);
-        let next_func = format!("{}_next", prefix);
+        let new_func = format!("{prefix}_new");
+        let next_func = format!("{prefix}_next");
 
         let new_ref = *self
             .func_refs
@@ -12899,8 +12907,8 @@ impl<'a> FuncCodegen<'a> {
         let (idx_var, iter_var, _iter_val, loop_id) = if has_await {
             let loop_id = self.async_loop_index;
             self.async_loop_index += 1;
-            let idx_name = SmolStr::new(format!(".__loop_idx_{}", loop_id));
-            let list_name = SmolStr::new(format!(".__loop_list_{}", loop_id));
+            let idx_name = SmolStr::new(format!(".__loop_idx_{loop_id}"));
+            let list_name = SmolStr::new(format!(".__loop_list_{loop_id}"));
             let (idx_var, _) = self.lookup_var(&idx_name).unwrap();
             let (iter_var, _) = self.lookup_var(&list_name).unwrap();
 
@@ -13006,7 +13014,7 @@ impl<'a> FuncCodegen<'a> {
         let next = self.builder.ins().iadd(cur, one);
         self.builder.def_var(idx_var, next);
         if let Some(loop_id) = loop_id {
-            let idx_name = SmolStr::new(format!(".__loop_idx_{}", loop_id));
+            let idx_name = SmolStr::new(format!(".__loop_idx_{loop_id}"));
             self.store_async_local_if_any(&idx_name, next)?;
         }
         self.builder.ins().jump(header, &[]);
@@ -13017,7 +13025,7 @@ impl<'a> FuncCodegen<'a> {
         let final_iter = self.builder.use_var(iter_var);
         self.emit_arc_release_if_managed(&iterable.ty, final_iter)?;
         if let Some(loop_id) = loop_id {
-            let list_name = SmolStr::new(format!(".__loop_list_{}", loop_id));
+            let list_name = SmolStr::new(format!(".__loop_list_{loop_id}"));
             let zero = self.builder.ins().iconst(self.ptr_ty, 0);
             self.emit_arc_unregister_edge(self.async_frame.unwrap(), final_iter)?;
             self.store_async_local_if_any(&list_name, zero)?;
@@ -13062,8 +13070,8 @@ impl<'a> FuncCodegen<'a> {
         let (idx_var, iter_var, _iter_val, loop_id) = if has_await {
             let loop_id = self.async_loop_index;
             self.async_loop_index += 1;
-            let idx_name = SmolStr::new(format!(".__loop_idx_{}", loop_id));
-            let list_name = SmolStr::new(format!(".__loop_list_{}", loop_id));
+            let idx_name = SmolStr::new(format!(".__loop_idx_{loop_id}"));
+            let list_name = SmolStr::new(format!(".__loop_list_{loop_id}"));
             let (idx_var, _) = self.lookup_var(&idx_name).unwrap();
             let (iter_var, _) = self.lookup_var(&list_name).unwrap();
 
@@ -13169,7 +13177,7 @@ impl<'a> FuncCodegen<'a> {
         let next = self.builder.ins().iadd(cur, one);
         self.builder.def_var(idx_var, next);
         if let Some(loop_id) = loop_id {
-            let idx_name = SmolStr::new(format!(".__loop_idx_{}", loop_id));
+            let idx_name = SmolStr::new(format!(".__loop_idx_{loop_id}"));
             self.store_async_local_if_any(&idx_name, next)?;
         }
         self.builder.ins().jump(header, &[]);
@@ -13179,7 +13187,7 @@ impl<'a> FuncCodegen<'a> {
         let final_iter = self.builder.use_var(iter_var);
         self.emit_arc_release_if_managed(&iterable.ty, final_iter)?;
         if let Some(loop_id) = loop_id {
-            let list_name = SmolStr::new(format!(".__loop_list_{}", loop_id));
+            let list_name = SmolStr::new(format!(".__loop_list_{loop_id}"));
             let zero = self.builder.ins().iconst(self.ptr_ty, 0);
             self.emit_arc_unregister_edge(self.async_frame.unwrap(), final_iter)?;
             self.store_async_local_if_any(&list_name, zero)?;
@@ -13212,15 +13220,15 @@ impl<'a> FuncCodegen<'a> {
         let (idx_var, end_var, asc_var, iter_count_var, loop_id) = if has_await {
             let loop_id = self.async_loop_index;
             self.async_loop_index += 1;
-            let idx_name = SmolStr::new(format!(".__loop_idx_{}", loop_id));
-            let end_name = SmolStr::new(format!(".__loop_end_{}", loop_id));
-            let asc_name = SmolStr::new(format!(".__loop_asc_{}", loop_id));
+            let idx_name = SmolStr::new(format!(".__loop_idx_{loop_id}"));
+            let end_name = SmolStr::new(format!(".__loop_end_{loop_id}"));
+            let asc_name = SmolStr::new(format!(".__loop_asc_{loop_id}"));
             let (idx_var, _) = self.lookup_var(&idx_name).unwrap();
             let (end_var, _) = self.lookup_var(&end_name).unwrap();
             let (asc_var, _) = self.lookup_var(&asc_name).unwrap();
 
             let iter_count_var = if index_binding.is_some() {
-                let iter_name = SmolStr::new(format!(".__loop_iter_{}", loop_id));
+                let iter_name = SmolStr::new(format!(".__loop_iter_{loop_id}"));
                 let (v, _) = self.lookup_var(&iter_name).unwrap();
                 let zero = self.builder.ins().iconst(types::I64, 0);
                 self.builder.def_var(v, zero);
@@ -13327,7 +13335,7 @@ impl<'a> FuncCodegen<'a> {
         let next = self.builder.ins().iadd(cur2, inc);
         self.builder.def_var(idx_var, next);
         if let Some(loop_id) = loop_id {
-            let idx_name = SmolStr::new(format!(".__loop_idx_{}", loop_id));
+            let idx_name = SmolStr::new(format!(".__loop_idx_{loop_id}"));
             self.store_async_local_if_any(&idx_name, next)?;
         }
 
@@ -13337,7 +13345,7 @@ impl<'a> FuncCodegen<'a> {
             let next_ic = self.builder.ins().iadd(ic, one_ic);
             self.builder.def_var(ic_var, next_ic);
             if let Some(loop_id) = loop_id {
-                let iter_name = SmolStr::new(format!(".__loop_iter_{}", loop_id));
+                let iter_name = SmolStr::new(format!(".__loop_iter_{loop_id}"));
                 self.store_async_local_if_any(&iter_name, next_ic)?;
             }
         }
@@ -13429,10 +13437,10 @@ impl<'a> FuncCodegen<'a> {
         let (idx_var, len_var, expected_ver_var, list_var, loop_id) = if has_await {
             let loop_id = self.async_loop_index;
             self.async_loop_index += 1;
-            let idx_name = SmolStr::new(format!(".__loop_idx_{}", loop_id));
-            let len_name = SmolStr::new(format!(".__loop_len_{}", loop_id));
-            let list_name = SmolStr::new(format!(".__loop_list_{}", loop_id));
-            let ver_name = SmolStr::new(format!(".__loop_version_{}", loop_id));
+            let idx_name = SmolStr::new(format!(".__loop_idx_{loop_id}"));
+            let len_name = SmolStr::new(format!(".__loop_len_{loop_id}"));
+            let list_name = SmolStr::new(format!(".__loop_list_{loop_id}"));
+            let ver_name = SmolStr::new(format!(".__loop_version_{loop_id}"));
             let (idx_var, _) = self.lookup_var(&idx_name).unwrap();
             let (len_var, _) = self.lookup_var(&len_name).unwrap();
             let (list_var, _) = self.lookup_var(&list_name).unwrap();
@@ -13504,9 +13512,7 @@ impl<'a> FuncCodegen<'a> {
         self.builder.switch_to_block(body_b);
 
         // Concurrent modification check
-        let list_current = list_var
-            .map(|var| self.builder.use_var(var))
-            .unwrap_or(list_v);
+        let list_current = list_var.map_or(list_v, |var| self.builder.use_var(var));
         let current_version =
             self.builder
                 .ins()
@@ -13544,9 +13550,7 @@ impl<'a> FuncCodegen<'a> {
 
         if let Some((_bvar, _)) = self.lookup_var(binding) {
             let cur2 = self.builder.use_var(idx_var);
-            let list_current = list_var
-                .map(|var| self.builder.use_var(var))
-                .unwrap_or(list_v);
+            let list_current = list_var.map_or(list_v, |var| self.builder.use_var(var));
             let call = self.builder.ins().call(get_ref, &[list_current, cur2]);
             let elem = self.builder.inst_results(call)[0];
             let elem = self.decode_list_storage_value(elem, elem_ty);
@@ -13582,7 +13586,7 @@ impl<'a> FuncCodegen<'a> {
         let next = self.builder.ins().iadd(cur2, one);
         self.builder.def_var(idx_var, next);
         if let Some(loop_id) = loop_id {
-            let idx_name = SmolStr::new(format!(".__loop_idx_{}", loop_id));
+            let idx_name = SmolStr::new(format!(".__loop_idx_{loop_id}"));
             self.store_async_local_if_any(&idx_name, next)?;
         }
         self.builder.ins().jump(header, &[]);
@@ -13605,13 +13609,11 @@ impl<'a> FuncCodegen<'a> {
             self.emit_for_release_element_binding(binding)?;
         }
         if let Some(loop_id) = loop_id {
-            let list_name = SmolStr::new(format!(".__loop_list_{}", loop_id));
-            let ver_name = SmolStr::new(format!(".__loop_version_{}", loop_id));
+            let list_name = SmolStr::new(format!(".__loop_list_{loop_id}"));
+            let ver_name = SmolStr::new(format!(".__loop_version_{loop_id}"));
             let zero = self.builder.ins().iconst(self.ptr_ty, 0);
             let zero_i64 = self.builder.ins().iconst(types::I64, 0);
-            let list_current = list_var
-                .map(|var| self.builder.use_var(var))
-                .unwrap_or(list_v);
+            let list_current = list_var.map_or(list_v, |var| self.builder.use_var(var));
             self.emit_arc_unregister_edge(self.async_frame.unwrap(), list_current)?;
             self.store_async_local_if_any(&list_name, zero)?;
             self.store_async_local_if_any(&ver_name, zero_i64)?;
@@ -13656,10 +13658,10 @@ impl<'a> FuncCodegen<'a> {
         let (idx_var, len_var, expected_ver_var, map_val, loop_id) = if has_await {
             let loop_id = self.async_loop_index;
             self.async_loop_index += 1;
-            let idx_name = SmolStr::new(format!(".__loop_idx_{}", loop_id));
-            let len_name = SmolStr::new(format!(".__loop_len_{}", loop_id));
-            let list_name = SmolStr::new(format!(".__loop_list_{}", loop_id));
-            let ver_name = SmolStr::new(format!(".__loop_version_{}", loop_id));
+            let idx_name = SmolStr::new(format!(".__loop_idx_{loop_id}"));
+            let len_name = SmolStr::new(format!(".__loop_len_{loop_id}"));
+            let list_name = SmolStr::new(format!(".__loop_list_{loop_id}"));
+            let ver_name = SmolStr::new(format!(".__loop_version_{loop_id}"));
             let (idx_var, _) = self.lookup_var(&idx_name).unwrap();
             let (len_var, _) = self.lookup_var(&len_name).unwrap();
             let (list_var, _) = self.lookup_var(&list_name).unwrap();
@@ -13802,7 +13804,7 @@ impl<'a> FuncCodegen<'a> {
         let next = self.builder.ins().iadd(cur3, one);
         self.builder.def_var(idx_var, next);
         if let Some(loop_id) = loop_id {
-            let idx_name = SmolStr::new(format!(".__loop_idx_{}", loop_id));
+            let idx_name = SmolStr::new(format!(".__loop_idx_{loop_id}"));
             self.store_async_local_if_any(&idx_name, next)?;
         }
         self.builder.ins().jump(header, &[]);
@@ -13827,8 +13829,8 @@ impl<'a> FuncCodegen<'a> {
             }
         }
         if let Some(loop_id) = loop_id {
-            let list_name = SmolStr::new(format!(".__loop_list_{}", loop_id));
-            let ver_name = SmolStr::new(format!(".__loop_version_{}", loop_id));
+            let list_name = SmolStr::new(format!(".__loop_list_{loop_id}"));
+            let ver_name = SmolStr::new(format!(".__loop_version_{loop_id}"));
             let zero = self.builder.ins().iconst(self.ptr_ty, 0);
             let zero_i64 = self.builder.ins().iconst(types::I64, 0);
             self.emit_arc_unregister_edge(self.async_frame.unwrap(), map_val)?;
@@ -13860,9 +13862,9 @@ impl<'a> FuncCodegen<'a> {
         let (idx_var, len_var, bytes_val, loop_id) = if has_await {
             let loop_id = self.async_loop_index;
             self.async_loop_index += 1;
-            let idx_name = SmolStr::new(format!(".__loop_idx_{}", loop_id));
-            let len_name = SmolStr::new(format!(".__loop_len_{}", loop_id));
-            let list_name = SmolStr::new(format!(".__loop_list_{}", loop_id));
+            let idx_name = SmolStr::new(format!(".__loop_idx_{loop_id}"));
+            let len_name = SmolStr::new(format!(".__loop_len_{loop_id}"));
+            let list_name = SmolStr::new(format!(".__loop_list_{loop_id}"));
             let (idx_var, _) = self.lookup_var(&idx_name).unwrap();
             let (len_var, _) = self.lookup_var(&len_name).unwrap();
             let (list_var, _) = self.lookup_var(&list_name).unwrap();
@@ -13962,7 +13964,7 @@ impl<'a> FuncCodegen<'a> {
         let next = self.builder.ins().iadd(cur3, one);
         self.builder.def_var(idx_var, next);
         if let Some(loop_id) = loop_id {
-            let idx_name = SmolStr::new(format!(".__loop_idx_{}", loop_id));
+            let idx_name = SmolStr::new(format!(".__loop_idx_{loop_id}"));
             self.store_async_local_if_any(&idx_name, next)?;
         }
         self.builder.ins().jump(header, &[]);
@@ -13970,7 +13972,7 @@ impl<'a> FuncCodegen<'a> {
         self.builder.seal_block(exit);
         self.builder.switch_to_block(exit);
         if let Some(loop_id) = loop_id {
-            let list_name = SmolStr::new(format!(".__loop_list_{}", loop_id));
+            let list_name = SmolStr::new(format!(".__loop_list_{loop_id}"));
             let zero = self.builder.ins().iconst(self.ptr_ty, 0);
             self.emit_arc_unregister_edge(self.async_frame.unwrap(), bytes_val)?;
             self.store_async_local_if_any(&list_name, zero)?;
@@ -14007,9 +14009,9 @@ impl<'a> FuncCodegen<'a> {
         let (idx_var, len_var, list_val, loop_id) = if has_await {
             let loop_id = self.async_loop_index;
             self.async_loop_index += 1;
-            let idx_name = SmolStr::new(format!(".__loop_idx_{}", loop_id));
-            let len_name = SmolStr::new(format!(".__loop_len_{}", loop_id));
-            let list_name = SmolStr::new(format!(".__loop_list_{}", loop_id));
+            let idx_name = SmolStr::new(format!(".__loop_idx_{loop_id}"));
+            let len_name = SmolStr::new(format!(".__loop_len_{loop_id}"));
+            let list_name = SmolStr::new(format!(".__loop_list_{loop_id}"));
             let (idx_var, _) = self.lookup_var(&idx_name).unwrap();
             let (len_var, _) = self.lookup_var(&len_name).unwrap();
             let (list_var, _) = self.lookup_var(&list_name).unwrap();
@@ -14104,7 +14106,7 @@ impl<'a> FuncCodegen<'a> {
         let next = self.builder.ins().iadd(cur3, one);
         self.builder.def_var(idx_var, next);
         if let Some(loop_id) = loop_id {
-            let idx_name = SmolStr::new(format!(".__loop_idx_{}", loop_id));
+            let idx_name = SmolStr::new(format!(".__loop_idx_{loop_id}"));
             self.store_async_local_if_any(&idx_name, next)?;
         }
         self.builder.ins().jump(header, &[]);
@@ -14126,7 +14128,7 @@ impl<'a> FuncCodegen<'a> {
             self.emit_for_release_element_binding(binding)?;
         }
         if let Some(loop_id) = loop_id {
-            let list_name = SmolStr::new(format!(".__loop_list_{}", loop_id));
+            let list_name = SmolStr::new(format!(".__loop_list_{loop_id}"));
             self.emit_arc_release_if_managed(&Ty::List(Box::new(Ty::String)), list_val)?;
             let zero = self.builder.ins().iconst(self.ptr_ty, 0);
             self.emit_arc_unregister_edge(self.async_frame.unwrap(), list_val)?;
@@ -14318,7 +14320,7 @@ impl<'a> FuncCodegen<'a> {
                 cond
             }
             HirPattern::BoolLit(b) => {
-                let lit = self.builder.ins().iconst(types::I8, if *b { 1 } else { 0 });
+                let lit = self.builder.ins().iconst(types::I8, i64::from(*b));
                 self.builder
                     .ins()
                     .icmp(ir::condcodes::IntCC::Equal, scr, lit)
@@ -14353,7 +14355,10 @@ impl<'a> FuncCodegen<'a> {
                 if let Some(layout) = self.enum_layouts.get(def_id).cloned() {
                     if let Some(v_layout) = layout.variant(variant) {
                         let tag_val = self.builder.ins().load(types::I32, MemFlags::new(), scr, 0);
-                        let expected = self.builder.ins().iconst(types::I32, v_layout.tag as i64);
+                        let expected = self
+                            .builder
+                            .ins()
+                            .iconst(types::I32, i64::from(v_layout.tag));
                         let mut cond =
                             self.builder
                                 .ins()
@@ -14498,12 +14503,14 @@ impl<'a> FuncCodegen<'a> {
                     let var = self
                         .lookup_var(name)
                         .filter(|(_, existing_ty)| existing_ty == bty)
-                        .map(|(v, _)| v)
-                        .unwrap_or_else(|| {
-                            let v = self.builder.declare_var(cl_ty);
-                            self.insert_var(name.clone(), (v, bty.clone()));
-                            v
-                        });
+                        .map_or_else(
+                            || {
+                                let v = self.builder.declare_var(cl_ty);
+                                self.insert_var(name.clone(), (v, bty.clone()));
+                                v
+                            },
+                            |(v, _)| v,
+                        );
                     self.builder.def_var(var, val);
                     if retain_bindings && is_managed_ty(bty) {
                         self.emit_arc_retain_if_managed(bty, val)?;
@@ -14825,7 +14832,7 @@ impl<'a> FuncCodegen<'a> {
         Ok(self.builder.block_params(merge_block)[0])
     }
 
-    fn expr_can_be_reloaded_after_await(expr: &HirExpr) -> bool {
+    const fn expr_can_be_reloaded_after_await(expr: &HirExpr) -> bool {
         matches!(
             expr.kind,
             HirExprKind::BoolLit(_)
@@ -14839,7 +14846,7 @@ impl<'a> FuncCodegen<'a> {
 
     fn emit_expr(&mut self, expr: &HirExpr) -> Result<ir::Value, String> {
         Ok(match &expr.kind {
-            HirExprKind::BoolLit(b) => self.builder.ins().iconst(types::I8, if *b { 1 } else { 0 }),
+            HirExprKind::BoolLit(b) => self.builder.ins().iconst(types::I8, i64::from(*b)),
             HirExprKind::IntLit(n) => {
                 let cl = cl_type(&expr.ty, self.ptr_ty).unwrap_or(types::I64);
                 self.builder.ins().iconst(cl, *n)
@@ -15815,7 +15822,7 @@ impl<'a> FuncCodegen<'a> {
                             || (matches!(fi.ty, Ty::Named(..))
                                 && self.ty_is_inline_for_layout(&fi.ty));
                         if inline_aggregate {
-                            self.builder.ins().iadd_imm(ptr, fi.offset as i64)
+                            self.builder.ins().iadd_imm(ptr, i64::from(fi.offset))
                         } else if let Some(cl_ty) = cl_type(&fi.ty, self.ptr_ty) {
                             self.builder
                                 .ins()
@@ -15848,7 +15855,7 @@ impl<'a> FuncCodegen<'a> {
                         let inline_struct = matches!(elem_ty.as_ref(), Ty::Named(..))
                             && self.ty_is_inline_for_layout(elem_ty);
                         let (elem_size, _) = self.field_size_align_for_layout(elem_ty);
-                        let stride = self.builder.ins().iconst(types::I64, elem_size as i64);
+                        let stride = self.builder.ins().iconst(types::I64, i64::from(elem_size));
                         let byte_offset = self.builder.ins().imul(idx, stride);
                         let offset = if self.ptr_ty == types::I64 {
                             byte_offset
@@ -15882,7 +15889,7 @@ impl<'a> FuncCodegen<'a> {
                         ));
                         self.builder.ins().stack_store(container, slot, 0);
                         let base = self.builder.ins().stack_addr(self.ptr_ty, slot, 0);
-                        let stride = self.builder.ins().iconst(types::I64, elem_size as i64);
+                        let stride = self.builder.ins().iconst(types::I64, i64::from(elem_size));
                         let byte_offset = self.builder.ins().imul(idx, stride);
                         let offset = if self.ptr_ty == types::I64 {
                             byte_offset
@@ -15899,10 +15906,7 @@ impl<'a> FuncCodegen<'a> {
                             })?;
                         let one = self.builder.ins().iconst(types::I64, 1);
                         let end = self.builder.ins().iadd(idx, one);
-                        if !self.hosted_traps {
-                            let call = self.builder.ins().call(slice_ref, &[container, idx, end]);
-                            self.builder.inst_results(call)[0]
-                        } else {
+                        if self.hosted_traps {
                             let len_ref =
                                 *self.func_refs.get("ori_string_len").ok_or_else(|| {
                                     "missing runtime function `ori_string_len`".to_string()
@@ -15948,16 +15952,16 @@ impl<'a> FuncCodegen<'a> {
                             self.builder.switch_to_block(join);
                             self.terminated = false;
                             self.builder.block_params(join)[0]
+                        } else {
+                            let call = self.builder.ins().call(slice_ref, &[container, idx, end]);
+                            self.builder.inst_results(call)[0]
                         }
                     }
                     Ty::Bytes => {
                         let get_ref = *self.func_refs.get("ori_bytes_get").ok_or_else(|| {
                             "missing runtime function `ori_bytes_get`".to_string()
                         })?;
-                        if !self.hosted_traps {
-                            let call = self.builder.ins().call(get_ref, &[container, idx]);
-                            self.builder.inst_results(call)[0]
-                        } else {
+                        if self.hosted_traps {
                             let len_ref =
                                 *self.func_refs.get("ori_bytes_len").ok_or_else(|| {
                                     "missing runtime function `ori_bytes_len`".to_string()
@@ -15998,6 +16002,9 @@ impl<'a> FuncCodegen<'a> {
                             self.builder.switch_to_block(join);
                             self.terminated = false;
                             self.builder.block_params(join)[0]
+                        } else {
+                            let call = self.builder.ins().call(get_ref, &[container, idx]);
+                            self.builder.inst_results(call)[0]
                         }
                     }
                     _ => {
@@ -16044,7 +16051,7 @@ impl<'a> FuncCodegen<'a> {
             } => {
                 let vec_cl_ty = cl_type(&expr.ty, self.ptr_ty).unwrap_or(types::F32X4);
                 let (elem_size, _) = self.field_size_align_for_layout(elem_ty);
-                let total = elem_size.saturating_mul(*lanes as u32).max(16);
+                let total = elem_size.saturating_mul(u32::from(*lanes)).max(16);
                 let slot = self.builder.create_sized_stack_slot(ir::StackSlotData::new(
                     ir::StackSlotKind::ExplicitSlot,
                     total,
@@ -16120,7 +16127,10 @@ impl<'a> FuncCodegen<'a> {
 
                     if let Some(v_layout) = layout.variant(variant) {
                         // Store the tag at offset 0
-                        let tag = self.builder.ins().iconst(types::I32, v_layout.tag as i64);
+                        let tag = self
+                            .builder
+                            .ins()
+                            .iconst(types::I32, i64::from(v_layout.tag));
                         self.builder.ins().store(MemFlags::new(), tag, base, 0);
 
                         // Store fields in the payload layout
@@ -16376,58 +16386,55 @@ impl<'a> FuncCodegen<'a> {
                     return self.emit_dynamic_method_call(receiver, method, args);
                 }
                 let recv = self.emit_expr(receiver)?;
-                match method.as_str() {
-                    "__slice" => {
-                        let runtime_name = match &receiver.ty {
-                            Ty::String => "ori_string_slice",
-                            Ty::List(_) => "ori_list_slice",
-                            Ty::Bytes => "ori_bytes_slice",
-                            other => {
-                                return Err(format!(
-                                    "native range slice codegen is missing for type `{}`",
-                                    self.display_ty(other)
-                                ))
-                            }
-                        };
-                        let slice_ref = *self
-                            .func_refs
-                            .get(runtime_name)
-                            .ok_or_else(|| format!("missing runtime function `{runtime_name}`"))?;
-                        let start = self.emit_expr(&args[0])?;
-                        let end = self.emit_expr(&args[1])?;
-                        let call = self.builder.ins().call(slice_ref, &[recv, start, end]);
-                        self.builder.inst_results(call)[0]
-                    }
-                    _ => {
-                        // Generic trait calls are lowered while the receiver may still be
-                        // a type parameter. After monomorphization the receiver is concrete,
-                        // so resolve the trait implementation symbol for that concrete type.
-                        let target_method = match &receiver.ty {
-                            Ty::Named(type_def_id, _) => self
-                                .trait_method_func_name_for_type(*type_def_id, method)
-                                .unwrap_or_else(|| method.clone()),
-                            _ => method.clone(),
-                        };
-                        let mut all_args = vec![recv];
-                        self.emit_arc_retain_if_managed(&receiver.ty, recv)?;
-                        for a in args {
-                            let value = self.emit_expr(a)?;
-                            self.emit_arc_retain_if_managed(&a.ty, value)?;
-                            all_args.push(value);
-                        }
-                        if let Some(&fref) = self.func_refs.get(target_method.as_str()) {
-                            let call = self.builder.ins().call(fref, &all_args);
-                            let res = self.builder.inst_results(call);
-                            if res.is_empty() {
-                                self.builder.ins().iconst(types::I8, 0)
-                            } else {
-                                res[0]
-                            }
-                        } else {
+                if method.as_str() == "__slice" {
+                    let runtime_name = match &receiver.ty {
+                        Ty::String => "ori_string_slice",
+                        Ty::List(_) => "ori_list_slice",
+                        Ty::Bytes => "ori_bytes_slice",
+                        other => {
                             return Err(format!(
-                                "missing function reference `{target_method}` in native codegen"
-                            ));
+                                "native range slice codegen is missing for type `{}`",
+                                self.display_ty(other)
+                            ))
                         }
+                    };
+                    let slice_ref = *self
+                        .func_refs
+                        .get(runtime_name)
+                        .ok_or_else(|| format!("missing runtime function `{runtime_name}`"))?;
+                    let start = self.emit_expr(&args[0])?;
+                    let end = self.emit_expr(&args[1])?;
+                    let call = self.builder.ins().call(slice_ref, &[recv, start, end]);
+                    self.builder.inst_results(call)[0]
+                } else {
+                    // Generic trait calls are lowered while the receiver may still be
+                    // a type parameter. After monomorphization the receiver is concrete,
+                    // so resolve the trait implementation symbol for that concrete type.
+                    let target_method = match &receiver.ty {
+                        Ty::Named(type_def_id, _) => self
+                            .trait_method_func_name_for_type(*type_def_id, method)
+                            .unwrap_or_else(|| method.clone()),
+                        _ => method.clone(),
+                    };
+                    let mut all_args = vec![recv];
+                    self.emit_arc_retain_if_managed(&receiver.ty, recv)?;
+                    for a in args {
+                        let value = self.emit_expr(a)?;
+                        self.emit_arc_retain_if_managed(&a.ty, value)?;
+                        all_args.push(value);
+                    }
+                    if let Some(&fref) = self.func_refs.get(target_method.as_str()) {
+                        let call = self.builder.ins().call(fref, &all_args);
+                        let res = self.builder.inst_results(call);
+                        if res.is_empty() {
+                            self.builder.ins().iconst(types::I8, 0)
+                        } else {
+                            res[0]
+                        }
+                    } else {
+                        return Err(format!(
+                            "missing function reference `{target_method}` in native codegen"
+                        ));
                     }
                 }
             }
@@ -16475,7 +16482,7 @@ impl<'a> FuncCodegen<'a> {
                 let val = self.emit_expr(value)?;
                 if let Ty::Named(check_def_id, _) = check_ty {
                     if matches!(&value.ty, Ty::Any(_)) {
-                        let ptr_size = self.ptr_ty.bytes() as i64;
+                        let ptr_size = i64::from(self.ptr_ty.bytes());
                         let vtable = self.builder.ins().load(
                             self.ptr_ty,
                             MemFlags::new(),
@@ -16489,7 +16496,7 @@ impl<'a> FuncCodegen<'a> {
                         let expected_type_id = self
                             .builder
                             .ins()
-                            .iconst(self.ptr_ty, check_def_id.0 as i64);
+                            .iconst(self.ptr_ty, i64::from(check_def_id.0));
 
                         let is_match = self.builder.ins().icmp(
                             ir::condcodes::IntCC::Equal,
@@ -16499,16 +16506,14 @@ impl<'a> FuncCodegen<'a> {
                         is_match
                     } else if let Ty::Named(actual_def_id, _) = &value.ty {
                         let is_match = actual_def_id.0 == check_def_id.0;
-                        self.builder
-                            .ins()
-                            .iconst(types::I8, if is_match { 1 } else { 0 })
+                        self.builder.ins().iconst(types::I8, i64::from(is_match))
                     } else {
                         self.builder.ins().iconst(types::I8, 0)
                     }
                 } else {
                     self.builder
                         .ins()
-                        .iconst(types::I8, if value.ty == *check_ty { 1 } else { 0 })
+                        .iconst(types::I8, i64::from(value.ty == *check_ty))
                 }
             }
         })
@@ -17792,9 +17797,9 @@ impl<'a> FuncCodegen<'a> {
 
         if signed {
             let min = match self.builder.func.dfg.value_type(lv).bits() {
-                8 => i8::MIN as i64,
-                16 => i16::MIN as i64,
-                32 => i32::MIN as i64,
+                8 => i64::from(i8::MIN),
+                16 => i64::from(i16::MIN),
+                32 => i64::from(i32::MIN),
                 _ => i64::MIN,
             };
             let lhs_is_min = self.builder.ins().icmp_imm(IntCC::Equal, lv, min);
@@ -17826,7 +17831,9 @@ impl<'a> FuncCodegen<'a> {
         ty: &Ty,
     ) -> Result<ir::Value, String> {
         use ir::condcodes::{FloatCC, IntCC};
-        use BinaryOp::*;
+        use BinaryOp::{
+            Add, And, Band, Bor, Bxor, Div, Eq, Ge, Gt, Le, Lt, Mul, Ne, Or, Rem, Shl, Shr, Sub,
+        };
         let float = is_float_ty(ty);
         let string = matches!(ty, Ty::String);
         // Unsigned scalars share the integer instructions but need the unsigned
@@ -17923,7 +17930,7 @@ impl<'a> FuncCodegen<'a> {
                     return self.emit_set_equality(lv, rv, inner, true);
                 } else if let Ty::Map(key, value) = ty {
                     return self.emit_map_equality(lv, rv, key, value, true);
-                } else if let Ty::Bytes = ty {
+                } else if matches!(ty, Ty::Bytes) {
                     return self.emit_bytes_equality(lv, rv, true);
                 } else if matches!(ty, Ty::Handle(_)) {
                     // Handles are borrowed opaque pointers. Identity compares
@@ -17982,7 +17989,7 @@ impl<'a> FuncCodegen<'a> {
                     return self.emit_set_equality(lv, rv, inner, false);
                 } else if let Ty::Map(key, value) = ty {
                     return self.emit_map_equality(lv, rv, key, value, false);
-                } else if let Ty::Bytes = ty {
+                } else if matches!(ty, Ty::Bytes) {
                     return self.emit_bytes_equality(lv, rv, false);
                 } else if matches!(ty, Ty::Handle(_)) {
                     // Handle inequality is the inverse of pointer identity;
@@ -18083,7 +18090,7 @@ impl<'a> FuncCodegen<'a> {
     /// target-dependent for out-of-range counts.
     fn emit_shift_guard(&mut self, lv: ir::Value, rv: ir::Value) -> Result<(), String> {
         use ir::condcodes::IntCC;
-        let bits = self.builder.func.dfg.value_type(lv).bits() as i64;
+        let bits = i64::from(self.builder.func.dfg.value_type(lv).bits());
         let zero = self.builder.ins().iconst(types::I64, 0);
         let width = self.builder.ins().iconst(types::I64, bits);
         let ge_zero = self
@@ -18280,7 +18287,7 @@ impl<'a> FuncCodegen<'a> {
     ) -> Result<ir::Value, String> {
         let mut offset: i32 = 0;
         // All elements must match for equality
-        let mut result = self.builder.ins().iconst(types::I8, if eq { 1 } else { 0 });
+        let mut result = self.builder.ins().iconst(types::I8, i64::from(eq));
         for elem_ty in elements {
             let cl_ty =
                 cl_type(elem_ty, self.ptr_ty).ok_or("tuple element has no native layout")?;
@@ -18330,7 +18337,7 @@ impl<'a> FuncCodegen<'a> {
         rv: ir::Value,
         eq: bool,
     ) -> Result<ir::Value, String> {
-        let ptr_size = self.ptr_ty.bytes() as i64;
+        let ptr_size = i64::from(self.ptr_ty.bytes());
         let vtable_l = self
             .builder
             .ins()
@@ -18364,7 +18371,7 @@ impl<'a> FuncCodegen<'a> {
         // --- types_ne_block ---
         self.builder.switch_to_block(types_ne_block);
         self.builder.seal_block(types_ne_block);
-        let false_val = self.builder.ins().iconst(types::I8, if eq { 0 } else { 1 });
+        let false_val = self.builder.ins().iconst(types::I8, i64::from(!eq));
         self.builder
             .ins()
             .jump(merge_block, &[BlockArg::Value(false_val)]);
@@ -18391,7 +18398,7 @@ impl<'a> FuncCodegen<'a> {
         // --- no_call_block ---
         self.builder.switch_to_block(no_call_block);
         self.builder.seal_block(no_call_block);
-        let false_val2 = self.builder.ins().iconst(types::I8, if eq { 0 } else { 1 });
+        let false_val2 = self.builder.ins().iconst(types::I8, i64::from(!eq));
         self.builder
             .ins()
             .jump(merge_block, &[BlockArg::Value(false_val2)]);
@@ -18748,7 +18755,7 @@ impl<'a> FuncCodegen<'a> {
             .cloned()
             .ok_or_else(|| format!("missing native struct layout for def {}", def_id.0))?;
 
-        let mut result = self.builder.ins().iconst(types::I8, if eq { 1 } else { 0 });
+        let mut result = self.builder.ins().iconst(types::I8, i64::from(eq));
         for (_, field) in layout.fields {
             let concrete_field_ty = substitute_ty_params(&field.ty, args);
             let cl_ty = cl_type(&concrete_field_ty, self.ptr_ty)
@@ -19427,9 +19434,8 @@ impl NativeLinker {
             }
         }
 
-        let command = std::env::var("ORI_RUSTC")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("rustc"));
+        let command =
+            std::env::var("ORI_RUSTC").map_or_else(|_| PathBuf::from("rustc"), PathBuf::from);
         let linker_override = rust_lld_override(&command)?;
         Ok(Self {
             strategy: NativeLinkerStrategy::RustcDriver {
@@ -19439,7 +19445,7 @@ impl NativeLinker {
         })
     }
 
-    pub fn strategy_name(&self) -> &'static str {
+    pub const fn strategy_name(&self) -> &'static str {
         match &self.strategy {
             NativeLinkerStrategy::RustcDriver { .. } => "RustcDriver",
             NativeLinkerStrategy::RawNativeCommand { .. } => "RawNativeCommand",
@@ -19920,7 +19926,7 @@ fn find_linux_ld() -> Result<PathBuf, String> {
 }
 
 /// Ordered bare names tried on `PATH` after the C compiler driver.
-fn linux_system_linker_path_candidates() -> &'static [&'static str] {
+const fn linux_system_linker_path_candidates() -> &'static [&'static str] {
     &["mold", "ld.lld", "ld"]
 }
 
@@ -20010,7 +20016,7 @@ fn discover_bundled_rust_lld_from_exe_dir(dir: &Path) -> Option<PathBuf> {
 
 /// `rust-lld` from the Rust sysroot is often dynamically linked to `libLLVM` and
 /// fails with exit 127 when copied into a release package without that library.
-/// Prefer SystemLinker in that case rather than a non-runnable BundledRustLld.
+/// Prefer `SystemLinker` in that case rather than a non-runnable `BundledRustLld`.
 fn validate_rust_lld_runs(lld: &Path) -> Result<(), String> {
     let output = std::process::Command::new(lld)
         .arg("-flavor")
@@ -20073,7 +20079,7 @@ fn discover_msvc_crt_lib_dirs() -> Result<Vec<PathBuf>, String> {
     Ok(vec![msvc_lib, um_lib, ucrt_lib])
 }
 
-fn msvc_arch_dir() -> &'static str {
+const fn msvc_arch_dir() -> &'static str {
     if cfg!(target_pointer_width = "64") {
         "x64"
     } else if cfg!(target_pointer_width = "32") {
@@ -20134,7 +20140,7 @@ fn find_latest_msvc_tools_lib(vs_install: &Path, arch: &str) -> Result<PathBuf, 
     let mut versions: Vec<_> = std::fs::read_dir(&tools_dir)
         .map_err(|e| format!("cannot read MSVC tools dir `{}`: {e}", tools_dir.display()))?
         .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().map(|t| t.is_dir()).unwrap_or(false))
+        .filter(|entry| entry.file_type().is_ok_and(|t| t.is_dir()))
         .map(|entry| entry.file_name().to_string_lossy().to_string())
         .collect();
     versions.sort();
@@ -20178,7 +20184,7 @@ fn pick_latest_windows_sdk_version(kits_root: &Path) -> Result<String, String> {
             )
         })?
         .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().map(|t| t.is_dir()).unwrap_or(false))
+        .filter(|entry| entry.file_type().is_ok_and(|t| t.is_dir()))
         .map(|entry| entry.file_name().to_string_lossy().to_string())
         .collect();
     versions.sort();
@@ -20498,7 +20504,7 @@ fn discover_macos_crt() -> Result<MacOsCrt, String> {
     })
 }
 
-fn macos_arch() -> &'static str {
+const fn macos_arch() -> &'static str {
     if cfg!(target_arch = "aarch64") {
         "arm64"
     } else {
@@ -21107,8 +21113,7 @@ fn format_native_link_failure(
     }
     if options.raw_diagnostics {
         message.push_str(&format!(
-            "\nstdout:\n{}\nstderr:\n{}",
-            stdout_trimmed, stderr_trimmed
+            "\nstdout:\n{stdout_trimmed}\nstderr:\n{stderr_trimmed}"
         ));
     } else {
         message.push_str("\nuse `ori compile --native-raw` to print full linker stdout/stderr");

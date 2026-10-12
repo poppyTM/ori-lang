@@ -271,29 +271,29 @@ pub enum HirPattern {
     IntLit(i64),
     StrLit(SmolStr),
     None_,
-    Some_(Box<HirPattern>),
-    Ok_(Box<HirPattern>),
-    Err_(Box<HirPattern>),
+    Some_(Box<Self>),
+    Ok_(Box<Self>),
+    Err_(Box<Self>),
     Variant {
         def_id: DefId,
         variant: SmolStr,
-        fields: Vec<(SmolStr, HirPattern)>,
+        fields: Vec<(SmolStr, Self)>,
     },
-    Tuple(Vec<HirPattern>),
+    Tuple(Vec<Self>),
     /// `a or b` — matches when any alternative matches. Alternatives never
     /// bind (rejected by the checker), so this is a pure test.
-    Or(Vec<HirPattern>),
+    Or(Vec<Self>),
 }
 
 #[derive(Debug, Clone)]
 pub enum HirLValue {
     Var(SmolStr),
     Field {
-        base: Box<HirLValue>,
+        base: Box<Self>,
         field: SmolStr,
     },
     Index {
-        base: Box<HirLValue>,
+        base: Box<Self>,
         index: Box<HirExpr>,
     },
 }

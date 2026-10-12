@@ -47,7 +47,7 @@ impl Drop for ThreadSignalStack {
         // alternate stack. Restoring the previous descriptor removes all
         // kernel references before the mmap region is released.
         unsafe {
-            let _ = libc::sigaltstack(&self.previous, std::ptr::null_mut());
+            let _ = libc::sigaltstack(&raw const self.previous, std::ptr::null_mut());
             let _ = libc::munmap(self.memory, self.length);
         }
         ATTACHED_THREADS.fetch_sub(1, Ordering::AcqRel);
@@ -60,7 +60,7 @@ thread_local! {
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-unsafe fn interrupted_stack_pointer(context: *mut libc::c_void) -> usize {
+const unsafe fn interrupted_stack_pointer(context: *mut libc::c_void) -> usize {
     if context.is_null() {
         return 0;
     }
@@ -104,7 +104,7 @@ unsafe fn restore_previous_and_raise(signal: libc::c_int) {
     } else {
         std::ptr::read(std::ptr::addr_of!(PREVIOUS_SEGV).cast::<libc::sigaction>())
     };
-    let _ = libc::sigaction(signal, &previous, std::ptr::null_mut());
+    let _ = libc::sigaction(signal, &raw const previous, std::ptr::null_mut());
     let _ = libc::raise(signal);
 }
 
@@ -147,14 +147,18 @@ unsafe fn install_process_handler() -> bool {
     let mut action: libc::sigaction = std::mem::zeroed();
     action.sa_sigaction = handler as *const () as usize;
     action.sa_flags = libc::SA_ONSTACK | libc::SA_SIGINFO;
-    libc::sigemptyset(&mut action.sa_mask);
+    libc::sigemptyset(&raw mut action.sa_mask);
     let mut previous_segv: libc::sigaction = std::mem::zeroed();
-    if libc::sigaction(libc::SIGSEGV, &action, &mut previous_segv) != 0 {
+    if libc::sigaction(libc::SIGSEGV, &raw const action, &raw mut previous_segv) != 0 {
         return false;
     }
     let mut previous_bus: libc::sigaction = std::mem::zeroed();
-    if libc::sigaction(libc::SIGBUS, &action, &mut previous_bus) != 0 {
-        let _ = libc::sigaction(libc::SIGSEGV, &previous_segv, std::ptr::null_mut());
+    if libc::sigaction(libc::SIGBUS, &raw const action, &raw mut previous_bus) != 0 {
+        let _ = libc::sigaction(
+            libc::SIGSEGV,
+            &raw const previous_segv,
+            std::ptr::null_mut(),
+        );
         return false;
     }
     std::ptr::write(
@@ -193,7 +197,7 @@ unsafe fn attach_current_thread() -> bool {
             ss_flags: 0,
             ss_size: length,
         };
-        if libc::sigaltstack(&stack, &mut previous) != 0 {
+        if libc::sigaltstack(&raw const stack, &raw mut previous) != 0 {
             let _ = libc::munmap(memory, length);
             return false;
         }
@@ -245,8 +249,12 @@ pub(super) unsafe fn uninstall() {
                 std::ptr::read(std::ptr::addr_of!(PREVIOUS_SEGV).cast::<libc::sigaction>());
             let previous_bus =
                 std::ptr::read(std::ptr::addr_of!(PREVIOUS_BUS).cast::<libc::sigaction>());
-            let _ = libc::sigaction(libc::SIGSEGV, &previous_segv, std::ptr::null_mut());
-            let _ = libc::sigaction(libc::SIGBUS, &previous_bus, std::ptr::null_mut());
+            let _ = libc::sigaction(
+                libc::SIGSEGV,
+                &raw const previous_segv,
+                std::ptr::null_mut(),
+            );
+            let _ = libc::sigaction(libc::SIGBUS, &raw const previous_bus, std::ptr::null_mut());
         }
     }
     detach_current_thread();

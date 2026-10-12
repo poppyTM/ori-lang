@@ -136,9 +136,8 @@ pub fn parse_doctest_directives(code: &str) -> DoctestDirective {
                     lines.push(rest_trimmed.to_string());
                 }
                 continue;
-            } else {
-                in_multiline_output = false;
             }
+            in_multiline_output = false;
         }
 
         if let Some(rest) = trimmed.strip_prefix("--") {
@@ -251,7 +250,7 @@ impl StdoutCapture {
             loop {
                 let n = libc::read(
                     self.pipe_read,
-                    buf.as_mut_ptr() as *mut libc::c_void,
+                    buf.as_mut_ptr().cast::<libc::c_void>(),
                     buf.len(),
                 );
                 if n <= 0 {
@@ -428,7 +427,7 @@ pub fn run_doctests(cases: &[DocTestCase], filter: Option<&str>) -> (Vec<TestRes
         let result = match fs::write(&file_path, &full_src) {
             Ok(()) => match run_jit(&file_path) {
                 Ok(run_out) => {
-                    let captured_stdout = capture.map(|c| c.finish()).unwrap_or_default();
+                    let captured_stdout = capture.map(StdoutCapture::finish).unwrap_or_default();
                     let passed_normally = !run_out.has_errors && run_out.exit_code == 0;
 
                     match &directive {
@@ -451,12 +450,7 @@ pub fn run_doctests(cases: &[DocTestCase], filter: Option<&str>) -> (Vec<TestRes
                             }
                         }
                         DoctestDirective::Output(expected) => {
-                            if !passed_normally {
-                                failed_doctest(
-                                    name,
-                                    format!("doctest exited with status {}", run_out.exit_code),
-                                )
-                            } else {
+                            if passed_normally {
                                 let actual_trim = captured_stdout.trim();
                                 let expected_trim = expected.trim();
                                 if actual_trim == expected_trim {
@@ -472,11 +466,15 @@ pub fn run_doctests(cases: &[DocTestCase], filter: Option<&str>) -> (Vec<TestRes
                                     failed_doctest(
                                         name,
                                         format!(
-                                            "Doctest output mismatch:\n=== Expected ===\n{}\n=== Actual ===\n{}",
-                                            expected_trim, actual_trim
+                                            "Doctest output mismatch:\n=== Expected ===\n{expected_trim}\n=== Actual ===\n{actual_trim}"
                                         ),
                                     )
                                 }
+                            } else {
+                                failed_doctest(
+                                    name,
+                                    format!("doctest exited with status {}", run_out.exit_code),
+                                )
                             }
                         }
                         _ => TestResult {
@@ -494,12 +492,12 @@ pub fn run_doctests(cases: &[DocTestCase], filter: Option<&str>) -> (Vec<TestRes
                     }
                 }
                 Err(error) => {
-                    let _ = capture.map(|c| c.finish());
+                    let _ = capture.map(StdoutCapture::finish);
                     failed_doctest(name, format!("JIT execution failed: {error}"))
                 }
             },
             Err(error) => {
-                let _ = capture.map(|c| c.finish());
+                let _ = capture.map(StdoutCapture::finish);
                 failed_doctest(
                     name,
                     format!("Could not write doctest temporary source: {error}"),
@@ -528,7 +526,7 @@ pub fn run_doctests(cases: &[DocTestCase], filter: Option<&str>) -> (Vec<TestRes
     (results, cache)
 }
 
-fn failed_doctest(name: String, stderr: String) -> TestResult {
+const fn failed_doctest(name: String, stderr: String) -> TestResult {
     TestResult {
         name,
         passed: false,

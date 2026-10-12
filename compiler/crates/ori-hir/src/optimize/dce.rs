@@ -330,7 +330,7 @@ enum ExprEffect {
 }
 
 impl ExprEffect {
-    fn combine(self, other: Self) -> Self {
+    const fn combine(self, other: Self) -> Self {
         match (self, other) {
             (Self::Effectful, _) | (_, Self::Effectful) => Self::Effectful,
             (Self::MayTrap, _) | (_, Self::MayTrap) => Self::MayTrap,

@@ -145,7 +145,7 @@ pub struct GitDependencySpec {
 }
 
 impl GitDependencySpec {
-    pub fn from_requirement(
+    pub const fn from_requirement(
         url: String,
         rev: Option<String>,
         tag: Option<String>,
@@ -274,7 +274,7 @@ pub fn run_install_package(options: InstallPackageOptions) -> Result<InstallPack
                         .as_millis()
                 ));
 
-                eprintln!("ori: cloning {}...", url);
+                eprintln!("ori: cloning {url}...");
                 let status = Command::new("git")
                     .arg("clone")
                     .arg("--depth")
@@ -288,8 +288,7 @@ pub fn run_install_package(options: InstallPackageOptions) -> Result<InstallPack
 
                 if !status.success() {
                     return Err(format!(
-                        "package.git_clone_failed: git clone failed with status: {}",
-                        status
+                        "package.git_clone_failed: git clone failed with status: {status}"
                     ));
                 }
 
@@ -544,12 +543,10 @@ fn restore_locked_dependencies(
                     (PathBuf::from(path), cache)
                 } else {
                     (
-                        source
-                            .strip_prefix("path:")
-                            .map(PathBuf::from)
-                            .unwrap_or_else(|| {
-                                PathBuf::from(dependency.path.as_deref().unwrap_or_default())
-                            }),
+                        source.strip_prefix("path:").map_or_else(
+                            || PathBuf::from(dependency.path.as_deref().unwrap_or_default()),
+                            PathBuf::from,
+                        ),
                         project_root,
                     )
                 };
@@ -987,7 +984,7 @@ fn write_package_lock(path: &Path, lock: &PackageLockfile) -> Result<(), String>
             // The lockfile is generated state, so replace it explicitly only
             // after the atomic rename attempt has failed.
             fs::remove_file(path)
-                .and_then(|_| fs::rename(&temporary, path))
+                .and_then(|()| fs::rename(&temporary, path))
                 .map_err(|replace_error| {
                     format!(
                         "package.lock_write_failed: cannot replace `{}`: {rename_error}; retry failed: {replace_error}",
@@ -1830,7 +1827,7 @@ fn parse_loose_inline_table(raw: &str) -> Result<HashMap<String, String>, String
         .strip_prefix('{')
         .ok_or_else(|| "inline table must start with `{`".to_string())?
         .strip_suffix('}')
-        .unwrap()
+        .ok_or_else(|| "inline table must end with `}`".to_string())?
         .trim();
     let mut out = HashMap::new();
     if inner.is_empty() {
@@ -1935,7 +1932,7 @@ fn parse_inline_table(value: &str) -> Result<HashMap<String, String>, String> {
         .strip_prefix('{')
         .ok_or_else(|| "inline table must start with `{`".to_string())?
         .strip_suffix('}')
-        .unwrap()
+        .ok_or_else(|| "inline table must end with `}`".to_string())?
         .trim();
     let mut out = HashMap::new();
     if inner.is_empty() {
@@ -2794,10 +2791,10 @@ fn locked_packages_output(
                     .url
                     .as_deref()
                     .and_then(|source| source.strip_prefix("path:"))
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| {
-                        project_root.join(dependency.path.as_deref().unwrap_or_default())
-                    }),
+                    .map_or_else(
+                        || project_root.join(dependency.path.as_deref().unwrap_or_default()),
+                        PathBuf::from,
+                    ),
                 LockedDependencySource::Registry | LockedDependencySource::Git => {
                     cache_root.join(&dependency.name).join(&dependency.version)
                 }
@@ -3020,7 +3017,7 @@ fn fetch_git_checkout(spec: &GitDependencySpec, cache_root: &Path) -> Result<Pat
 fn stable_source_key(source: &str) -> String {
     use sha2::{Digest, Sha256};
     let digest = Sha256::digest(source.as_bytes());
-    format!("{:x}", digest)
+    format!("{digest:x}")
 }
 
 fn has_nested_package_manifest(root: &Path) -> bool {
@@ -3269,7 +3266,7 @@ pub fn run_publish_package(options: PublishPackageOptions) -> Result<PublishPack
 
 pub fn resolve_registry_location(override_url: Option<&str>) -> Result<RegistryLocation, String> {
     let raw = override_url
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .or_else(|| std::env::var("ORI_REGISTRY").ok())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
@@ -3565,7 +3562,7 @@ fn atomic_replace_registry_index(path: &Path, bytes: &[u8]) -> Result<(), String
     match fs::rename(&temporary, path) {
         Ok(()) => Ok(()),
         Err(rename_error) if cfg!(windows) && path.is_file() => fs::remove_file(path)
-            .and_then(|_| fs::rename(&temporary, path))
+            .and_then(|()| fs::rename(&temporary, path))
             .map_err(|replace_error| {
                 format!(
                     "package.publish_failed: cannot replace `{}`: {rename_error}; retry failed: {replace_error}",
@@ -3611,7 +3608,7 @@ impl RegistryPublishLock {
                         .and_then(|metadata| metadata.modified())
                         .ok()
                         .and_then(|modified| modified.elapsed().ok())
-                        .is_some_and(|age| age > Duration::from_secs(120));
+                        .is_some_and(|age| age > Duration::from_mins(2));
                     if stale {
                         let _ = fs::remove_file(&path);
                         continue;
@@ -3954,8 +3951,7 @@ fn validate_package_tarball_with_limit(
         let kind = entry.header().entry_type();
         if !(kind.is_file() || kind.is_dir()) {
             return Err(format!(
-                "package.tarball_invalid: archive member `{path}` has unsupported entry kind `{:?}`",
-                kind
+                "package.tarball_invalid: archive member `{path}` has unsupported entry kind `{kind:?}`"
             ));
         }
         expanded_bytes = expanded_bytes.checked_add(entry.size()).ok_or_else(|| {
@@ -3997,9 +3993,7 @@ fn normalize_archive_member_path(path: &str) -> Result<String, String> {
         || path.contains('\0')
         || path.contains('\\')
         || path.split('/').any(|component| component == "..")
-        || path_without_trailing_slash
-            .split('/')
-            .any(|component| component.is_empty())
+        || path_without_trailing_slash.split('/').any(str::is_empty)
     {
         return Err(format!(
             "package.tarball_invalid: archive member `{path}` escapes the extraction root"

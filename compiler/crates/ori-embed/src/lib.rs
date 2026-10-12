@@ -54,7 +54,7 @@ fn callback_states() -> &'static Mutex<HashMap<u64, Arc<CallbackState>>> {
 fn lock_callback_states() -> std::sync::MutexGuard<'static, HashMap<u64, Arc<CallbackState>>> {
     callback_states()
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn set_callback_error(code: i32, message: impl Into<String>) {
@@ -99,7 +99,7 @@ impl OriConfig {
     }
 
     /// Select the execution profile used by `@cfg`.
-    pub fn with_execution_profile(mut self, profile: ExecutionProfile) -> Self {
+    pub const fn with_execution_profile(mut self, profile: ExecutionProfile) -> Self {
         self.cfg.execution_profile = profile;
         self
     }
@@ -129,7 +129,7 @@ impl OriConfig {
     }
 
     /// Return the selected execution profile.
-    pub fn execution_profile(&self) -> ExecutionProfile {
+    pub const fn execution_profile(&self) -> ExecutionProfile {
         self.cfg.execution_profile
     }
 
@@ -185,7 +185,7 @@ pub enum OriConfigError {
 pub struct ModuleId(u64);
 
 impl ModuleId {
-    pub fn get(self) -> u64 {
+    pub const fn get(self) -> u64 {
         self.0
     }
 }
@@ -195,7 +195,7 @@ impl ModuleId {
 pub struct SessionId(u64);
 
 impl SessionId {
-    pub fn get(self) -> u64 {
+    pub const fn get(self) -> u64 {
         self.0
     }
 }
@@ -205,7 +205,7 @@ impl SessionId {
 pub struct ModuleGeneration(u64);
 
 impl ModuleGeneration {
-    pub fn get(self) -> u64 {
+    pub const fn get(self) -> u64 {
         self.0
     }
 }
@@ -337,7 +337,7 @@ impl OriValue {
     }
 
     /// Return the boolean value if this is [`Self::Bool`].
-    pub fn as_bool(&self) -> Option<bool> {
+    pub const fn as_bool(&self) -> Option<bool> {
         match self {
             Self::Bool(value) => Some(*value),
             _ => None,
@@ -345,7 +345,7 @@ impl OriValue {
     }
 
     /// Return the integer value if this is [`Self::Int`].
-    pub fn as_int(&self) -> Option<i64> {
+    pub const fn as_int(&self) -> Option<i64> {
         match self {
             Self::Int(value) => Some(*value),
             _ => None,
@@ -353,7 +353,7 @@ impl OriValue {
     }
 
     /// Return the floating-point value if this is [`Self::Float`].
-    pub fn as_float(&self) -> Option<f64> {
+    pub const fn as_float(&self) -> Option<f64> {
         match self {
             Self::Float(value) => Some(*value),
             _ => None,
@@ -366,7 +366,7 @@ impl OriValue {
     ///
     /// The caller must keep the originating JIT generation alive and obey the
     /// pointer lifetime contract documented on [`OriValue`].
-    pub unsafe fn as_slice_ptr(&self) -> Option<*const u8> {
+    pub const unsafe fn as_slice_ptr(&self) -> Option<*const u8> {
         match self {
             Self::Slice(slice) => Some(slice.pointer.as_ptr()),
             _ => None,
@@ -435,7 +435,7 @@ pub struct OriHostFunction {
 pub struct OriCallbackId(u64);
 
 impl OriCallbackId {
-    pub fn get(self) -> u64 {
+    pub const fn get(self) -> u64 {
         self.0
     }
 }
@@ -484,7 +484,7 @@ pub struct OriHostValue {
 }
 
 impl OriHostValue {
-    fn void() -> Self {
+    const fn void() -> Self {
         Self {
             tag: OriHostValueTag::Void,
             int_value: 0,
@@ -872,11 +872,12 @@ impl OriHostRegistry {
             *state
                 .runtime_owner
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(owner.clone());
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(owner.clone());
             *state
                 .cancellation
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Arc::clone(&cancellation));
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                Some(Arc::clone(&cancellation));
         }
     }
 
@@ -973,7 +974,7 @@ fn begin_callback(id: u64) -> Option<(usize, Arc<CallbackState>)> {
     let cancelled = state
         .cancellation
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .as_ref()
         .is_some_and(|cancelled| cancelled.load(Ordering::Acquire));
     if cancelled {
@@ -1197,7 +1198,7 @@ fn invoke_aggregate_callback(
             let owner = state
                 .runtime_owner
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone()
                 .ok_or_else(|| "host callback runtime owner is not bound".to_owned());
             match owner {
@@ -1322,7 +1323,7 @@ fn aggregate_callback_result(
             let owner = state
                 .runtime_owner
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone()
                 .ok_or_else(|| "host callback runtime owner is not bound".to_owned())?;
             let pointer = if return_type == OriScalarType::String {
@@ -1917,15 +1918,15 @@ pub struct OriFunctionHandle {
 }
 
 impl OriFunctionHandle {
-    pub fn session(&self) -> SessionId {
+    pub const fn session(&self) -> SessionId {
         self.session
     }
 
-    pub fn module(&self) -> ModuleId {
+    pub const fn module(&self) -> ModuleId {
         self.module
     }
 
-    pub fn generation(&self) -> ModuleGeneration {
+    pub const fn generation(&self) -> ModuleGeneration {
         self.generation
     }
 
@@ -2107,15 +2108,15 @@ impl OriEngine {
         }
     }
 
-    pub fn config(&self) -> &OriConfig {
+    pub const fn config(&self) -> &OriConfig {
         &self.config
     }
 
-    pub fn host_registry(&self) -> &OriHostRegistry {
+    pub const fn host_registry(&self) -> &OriHostRegistry {
         &self.host_registry
     }
 
-    pub fn host_registry_mut(&mut self) -> &mut OriHostRegistry {
+    pub const fn host_registry_mut(&mut self) -> &mut OriHostRegistry {
         &mut self.host_registry
     }
 
@@ -2172,7 +2173,7 @@ impl OriEngine {
         let source = source.into();
         let path = PathBuf::from(&module_name);
         let cfg = self.config.cfg_context();
-        let check_path = path.clone();
+        let check_path = path;
         let check_source = source.clone();
 
         let output = ori_driver::pipeline::with_frontend_stack(move || {
@@ -2215,7 +2216,7 @@ impl OriEngine {
         let source = source.into();
         let path = PathBuf::from(&module_name);
         let cfg = self.config.cfg_context();
-        let compile_path = path.clone();
+        let compile_path = path;
         let compile_source = source.clone();
 
         let output = ori_driver::pipeline::with_frontend_stack(move || {
@@ -2663,7 +2664,7 @@ fn callback_kind_for_signature(
     Ok(kind)
 }
 
-fn ori_scalar_type_from_ty(ty: &Ty) -> OriScalarType {
+const fn ori_scalar_type_from_ty(ty: &Ty) -> OriScalarType {
     match ty {
         Ty::Bool => OriScalarType::Bool,
         Ty::Int => OriScalarType::Int,
@@ -2758,7 +2759,7 @@ fn validate_host_imports(
     Ok(())
 }
 
-fn ori_scalar_type_from_jit(ty: ori_codegen::JitScalarType) -> OriScalarType {
+const fn ori_scalar_type_from_jit(ty: ori_codegen::JitScalarType) -> OriScalarType {
     match ty {
         ori_codegen::JitScalarType::Bool => OriScalarType::Bool,
         ori_codegen::JitScalarType::Int => OriScalarType::Int,
@@ -2770,7 +2771,7 @@ fn ori_scalar_type_from_jit(ty: ori_codegen::JitScalarType) -> OriScalarType {
     }
 }
 
-fn jit_value_shape(value: &OriValue) -> ori_codegen::JitValue {
+const fn jit_value_shape(value: &OriValue) -> ori_codegen::JitValue {
     match value {
         OriValue::Bool(value) => ori_codegen::JitValue::Bool(*value),
         OriValue::Int(value) => ori_codegen::JitValue::Int(*value),
@@ -2855,7 +2856,7 @@ fn prepare_jit_arguments(
             OriValue::Int(value) => (ori_codegen::JitValue::Int(*value), None),
             OriValue::Float(value) => (ori_codegen::JitValue::Float(*value), None),
             OriValue::Slice(slice) => {
-                let pointer = slice.pointer.as_ptr() as *const u8;
+                let pointer = slice.pointer.as_ptr().cast_const();
                 // SAFETY: origin validation proves this live token belongs to
                 // the target generation. Retain creates the callee-owned slot.
                 unsafe { slice.owner.retain(pointer) };

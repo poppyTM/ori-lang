@@ -40,26 +40,26 @@ pub enum Expr {
     // ── Range ────────────────────────────────────────────────────────────────
     /// `start..end` — always inclusive both ends.
     Range {
-        start: Box<Expr>,
-        end: Box<Expr>,
+        start: Box<Self>,
+        end: Box<Self>,
         span: Span,
     },
 
     // ── Collection literals ──────────────────────────────────────────────────
     List {
-        elements: Vec<Expr>,
+        elements: Vec<Self>,
         span: Span,
     },
     Map {
-        entries: Vec<(Expr, Expr)>,
+        entries: Vec<(Self, Self)>,
         span: Span,
     },
     Set {
-        elements: Vec<Expr>,
+        elements: Vec<Self>,
         span: Span,
     },
     Tuple {
-        elements: Vec<Expr>,
+        elements: Vec<Self>,
         span: Span,
     },
 
@@ -92,60 +92,60 @@ pub enum Expr {
     // ── Operators ────────────────────────────────────────────────────────────
     Unary {
         op: UnaryOp,
-        operand: Box<Expr>,
+        operand: Box<Self>,
         span: Span,
     },
     Binary {
         op: BinaryOp,
-        lhs: Box<Expr>,
-        rhs: Box<Expr>,
+        lhs: Box<Self>,
+        rhs: Box<Self>,
         span: Span,
     },
 
     // ── Postfix operations ───────────────────────────────────────────────────
     Field {
-        object: Box<Expr>,
+        object: Box<Self>,
         field: Name,
         span: Span,
     },
     TupleIndex {
-        object: Box<Expr>,
+        object: Box<Self>,
         index: u32,
         span: Span,
     },
     Call {
-        callee: Box<Expr>,
+        callee: Box<Self>,
         args: Vec<Arg>,
         span: Span,
     },
     Index {
-        object: Box<Expr>,
+        object: Box<Self>,
         index: IndexExpr,
         span: Span,
     },
     /// `try expr` — propagate error / absence (postfix `expr?` removed in S3).
     Try {
-        expr: Box<Expr>,
+        expr: Box<Self>,
         span: Span,
     },
     /// `await expr` waits for a `future<T>` and produces `T`.
     Await {
-        expr: Box<Expr>,
+        expr: Box<Self>,
         span: Span,
     },
     /// `a |> f` — pipe into function.
     Pipe {
-        value: Box<Expr>,
-        func: Box<Expr>,
+        value: Box<Self>,
+        func: Box<Self>,
         span: Span,
     },
 
     // ── Inline control flow ──────────────────────────────────────────────────
     /// `if cond then a else b`
     IfExpr {
-        condition: Box<Expr>,
-        then_expr: Box<Expr>,
-        else_expr: Box<Expr>,
+        condition: Box<Self>,
+        then_expr: Box<Self>,
+        else_expr: Box<Self>,
         span: Span,
     },
 
@@ -154,7 +154,7 @@ pub enum Expr {
     /// on one type. The statement form (`Stmt::Match`, bodies are statement
     /// lists) stays separate — position decides the form, as with `if`.
     MatchExpr {
-        scrutinee: Box<Expr>,
+        scrutinee: Box<Self>,
         arms: Vec<MatchExprArm>,
         span: Span,
     },
@@ -165,7 +165,7 @@ pub enum Expr {
     // ── Struct update ─────────────────────────────────────────────────────────
     /// `original with { field: value } end`
     StructUpdate {
-        base: Box<Expr>,
+        base: Box<Self>,
         updates: Vec<FieldInit>,
         span: Span,
     },
@@ -173,7 +173,7 @@ pub enum Expr {
     // ── Type check ───────────────────────────────────────────────────────────
     /// `expr is TypeName` — runtime type narrowing on `any<Trait>`.
     IsCheck {
-        value: Box<Expr>,
+        value: Box<Self>,
         ty: QualifiedName,
         span: Span,
     },
@@ -182,37 +182,37 @@ pub enum Expr {
 impl Expr {
     pub fn span(&self) -> Span {
         match self {
-            Expr::BoolLit(_, s) | Expr::None(s) | Expr::SelfExpr(s) => *s,
-            Expr::IntLit { span, .. }
-            | Expr::FloatLit { span, .. }
-            | Expr::StrLit { span, .. }
-            | Expr::FStrLit { span, .. }
-            | Expr::BytesLit { span, .. } => *span,
-            Expr::Ident(n) => n.span,
-            Expr::QualifiedIdent(q) => q.span,
-            Expr::Range { span, .. }
-            | Expr::List { span, .. }
-            | Expr::Map { span, .. }
-            | Expr::Set { span, .. }
-            | Expr::Tuple { span, .. }
-            | Expr::StructLit { span, .. }
-            | Expr::AnonStructLit { span, .. }
-            | Expr::EnumVariantUnit { span, .. }
-            | Expr::EnumVariantNamed { span, .. }
-            | Expr::Unary { span, .. }
-            | Expr::Binary { span, .. }
-            | Expr::Field { span, .. }
-            | Expr::TupleIndex { span, .. }
-            | Expr::Call { span, .. }
-            | Expr::Index { span, .. }
-            | Expr::Try { span, .. }
-            | Expr::Await { span, .. }
-            | Expr::Pipe { span, .. }
-            | Expr::IfExpr { span, .. }
-            | Expr::MatchExpr { span, .. }
-            | Expr::StructUpdate { span, .. }
-            | Expr::IsCheck { span, .. } => *span,
-            Expr::Closure(c) => c.span,
+            Self::BoolLit(_, s) | Self::None(s) | Self::SelfExpr(s) => *s,
+            Self::IntLit { span, .. }
+            | Self::FloatLit { span, .. }
+            | Self::StrLit { span, .. }
+            | Self::FStrLit { span, .. }
+            | Self::BytesLit { span, .. } => *span,
+            Self::Ident(n) => n.span,
+            Self::QualifiedIdent(q) => q.span,
+            Self::Range { span, .. }
+            | Self::List { span, .. }
+            | Self::Map { span, .. }
+            | Self::Set { span, .. }
+            | Self::Tuple { span, .. }
+            | Self::StructLit { span, .. }
+            | Self::AnonStructLit { span, .. }
+            | Self::EnumVariantUnit { span, .. }
+            | Self::EnumVariantNamed { span, .. }
+            | Self::Unary { span, .. }
+            | Self::Binary { span, .. }
+            | Self::Field { span, .. }
+            | Self::TupleIndex { span, .. }
+            | Self::Call { span, .. }
+            | Self::Index { span, .. }
+            | Self::Try { span, .. }
+            | Self::Await { span, .. }
+            | Self::Pipe { span, .. }
+            | Self::IfExpr { span, .. }
+            | Self::MatchExpr { span, .. }
+            | Self::StructUpdate { span, .. }
+            | Self::IsCheck { span, .. } => *span,
+            Self::Closure(c) => c.span,
         }
     }
 }
@@ -318,7 +318,7 @@ pub struct ClosureExpr {
     pub span: Span,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClosureParam {
     pub name: Name,
     /// Omitted when written as `(u) => …`; filled by type checking context.

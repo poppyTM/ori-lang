@@ -14,7 +14,7 @@ struct NormalizedTripleString {
 
 // ── Pratt precedence ──────────────────────────────────────────────────────────
 
-fn infix_prec(kind: &TokenKind) -> Option<(u8, u8)> {
+const fn infix_prec(kind: &TokenKind) -> Option<(u8, u8)> {
     // Returns (left_prec, right_prec). right > left → right-associative.
     match kind {
         TokenKind::Pipe => Some((1, 2)),                   // |>  left-assoc
@@ -36,7 +36,7 @@ fn infix_prec(kind: &TokenKind) -> Option<(u8, u8)> {
     }
 }
 
-fn token_to_binop(kind: &TokenKind) -> Option<BinaryOp> {
+const fn token_to_binop(kind: &TokenKind) -> Option<BinaryOp> {
     match kind {
         TokenKind::Plus => Some(BinaryOp::Add),
         TokenKind::Minus => Some(BinaryOp::Sub),
@@ -62,14 +62,14 @@ fn token_to_binop(kind: &TokenKind) -> Option<BinaryOp> {
 
 // ── Public entry ──────────────────────────────────────────────────────────────
 
-fn is_comparison_op(op: BinaryOp) -> bool {
+const fn is_comparison_op(op: BinaryOp) -> bool {
     matches!(
         op,
         BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge
     )
 }
 
-fn is_comparison_expr(expr: &Expr) -> bool {
+const fn is_comparison_expr(expr: &Expr) -> bool {
     matches!(expr, Expr::Binary { op, .. } if is_comparison_op(*op))
 }
 
@@ -79,7 +79,7 @@ fn starts_numeric_suffix(text: &str) -> bool {
         .is_some_and(|ch| ch == '_' || ch.is_alphabetic())
 }
 
-impl<'src> Parser<'src> {
+impl Parser<'_> {
     /// Parse an expression (top-level precedence).
     pub fn parse_expr(&mut self) -> Option<Expr> {
         self.parse_expr_prec(0)
@@ -260,26 +260,23 @@ impl<'src> Parser<'src> {
                 // `.field` or `.integer` (tuple index)
                 Some(TokenKind::Dot) => {
                     self.advance();
-                    match self.peek_kind() {
-                        Some(TokenKind::IntLit) => {
-                            let tok = self.advance().unwrap();
-                            let idx: u32 = self.slice(tok.span).parse().unwrap_or(0);
-                            let span = span_start.cover(tok.span);
-                            expr = Expr::TupleIndex {
-                                object: Box::new(expr),
-                                index: idx,
-                                span,
-                            };
-                        }
-                        _ => {
-                            let field = self.parse_member_name()?;
-                            let span = span_start.cover(field.span);
-                            expr = Expr::Field {
-                                object: Box::new(expr),
-                                field,
-                                span,
-                            };
-                        }
+                    if matches!(self.peek_kind(), Some(TokenKind::IntLit)) {
+                        let tok = self.advance().unwrap();
+                        let idx: u32 = self.slice(tok.span).parse().unwrap_or(0);
+                        let span = span_start.cover(tok.span);
+                        expr = Expr::TupleIndex {
+                            object: Box::new(expr),
+                            index: idx,
+                            span,
+                        };
+                    } else {
+                        let field = self.parse_member_name()?;
+                        let span = span_start.cover(field.span);
+                        expr = Expr::Field {
+                            object: Box::new(expr),
+                            field,
+                            span,
+                        };
                     }
                 }
                 // `(args)` — call
@@ -877,19 +874,19 @@ impl<'src> Parser<'src> {
         // `a..b`, `a..`, `..b`, `..` — range index
         if self.at(&TokenKind::DotDot) {
             self.advance();
-            let end = if !self.at(&TokenKind::RBracket) {
-                Some(Box::new(self.parse_expr_prec(1)?))
-            } else {
+            let end = if self.at(&TokenKind::RBracket) {
                 None
+            } else {
+                Some(Box::new(self.parse_expr_prec(1)?))
             };
             return Some(IndexExpr::Range { start: None, end });
         }
         let expr = self.parse_expr_prec(1)?;
         if self.eat(&TokenKind::DotDot) {
-            let end = if !self.at(&TokenKind::RBracket) {
-                Some(Box::new(self.parse_expr_prec(1)?))
-            } else {
+            let end = if self.at(&TokenKind::RBracket) {
                 None
+            } else {
+                Some(Box::new(self.parse_expr_prec(1)?))
             };
             Some(IndexExpr::Range {
                 start: Some(Box::new(expr)),
@@ -1214,8 +1211,7 @@ impl<'src> Parser<'src> {
             while line_start <= end {
                 let line_end = normalized[line_start..end]
                     .find('\n')
-                    .map(|idx| line_start + idx)
-                    .unwrap_or(end);
+                    .map_or(end, |idx| line_start + idx);
                 let line = &normalized[line_start..line_end];
                 let content_start = if line.starts_with(baseline) {
                     line_start + baseline.len()
@@ -1404,7 +1400,7 @@ impl<'src> Parser<'src> {
             } else {
                 None
             };
-            let end = ty.as_ref().map(|t| t.span()).unwrap_or(name.span);
+            let end = ty.as_ref().map_or(name.span, ori_ast::ty::Type::span);
             params.push(ClosureParam {
                 name,
                 ty,
@@ -1475,7 +1471,7 @@ impl<'src> Parser<'src> {
 
     fn closure_suffix_at(&self, i: usize) -> bool {
         match self.token_kind_at(i) {
-            Some(TokenKind::FatArrow) | Some(TokenKind::Arrow) => true,
+            Some(TokenKind::FatArrow | TokenKind::Arrow) => true,
             // Long form: only commit when the body clearly starts with a statement
             // keyword. Bare `Ident` after `(a)` is the next statement, not a closure.
             Some(
@@ -1555,7 +1551,7 @@ impl<'src> Parser<'src> {
 }
 
 /// Callees eligible for poetic juxtaposition (`print name`, `io.print x`).
-fn is_poetic_callee(expr: &Expr) -> bool {
+const fn is_poetic_callee(expr: &Expr) -> bool {
     matches!(
         expr,
         Expr::Ident(_)
@@ -1568,7 +1564,7 @@ fn is_poetic_callee(expr: &Expr) -> bool {
     )
 }
 
-fn hex_value(ch: char) -> Option<u8> {
+const fn hex_value(ch: char) -> Option<u8> {
     match ch {
         '0'..='9' => Some(ch as u8 - b'0'),
         'a'..='f' => Some(ch as u8 - b'a' + 10),
@@ -1595,7 +1591,7 @@ fn fstr_source_offset(base: usize, offsets: Option<&[usize]>, idx: usize) -> usi
         .unwrap_or(idx)
 }
 
-fn offset_span(span: Span, offset: u32) -> Span {
+const fn offset_span(span: Span, offset: u32) -> Span {
     Span {
         start: span.start + offset,
         end: span.end + offset,

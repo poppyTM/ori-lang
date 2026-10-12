@@ -20,7 +20,7 @@ struct FuncModifiers {
     is_mut: bool,
 }
 
-impl<'src> Parser<'src> {
+impl Parser<'_> {
     /// Entry point: parse a full source file.
     pub fn parse_source_file(&mut self) -> SourceFile {
         let start = self.current_span();
@@ -94,7 +94,7 @@ impl<'src> Parser<'src> {
                 }
             }
         }
-        let end = self.tokens.last().map(|t| t.span).unwrap_or(start);
+        let end = self.tokens.last().map_or(start, |t| t.span);
         SourceFile {
             namespace,
             imports,
@@ -182,14 +182,13 @@ impl<'src> Parser<'src> {
         let (alias, selected) = if self.at(&TokenKind::LParen) {
             (None, self.parse_import_selection()?)
         } else if self.eat(&TokenKind::As) || self.eat(&TokenKind::Eq) {
-            match self.parse_name() {
-                Some(alias) => (Some(alias), Vec::new()),
-                None => {
-                    if !self.at_eof() && !is_import_alias_recovery_boundary(self.peek_kind()) {
-                        self.advance();
-                    }
-                    return None;
+            if let Some(alias) = self.parse_name() {
+                (Some(alias), Vec::new())
+            } else {
+                if !self.at_eof() && !is_import_alias_recovery_boundary(self.peek_kind()) {
+                    self.advance();
                 }
+                return None;
             }
         } else if self.at_contextual("only") {
             // S3 cutover: `only` removed; selective form is `path (A, B)`.
@@ -229,7 +228,7 @@ impl<'src> Parser<'src> {
             } else {
                 None
             };
-            let end = alias.as_ref().map(|a| a.span).unwrap_or(name.span);
+            let end = alias.as_ref().map_or(name.span, |a| a.span);
             selected.push(ImportItem {
                 span: name.span.cover(end),
                 name,
@@ -517,10 +516,7 @@ impl<'src> Parser<'src> {
         }
         matches!(
             self.peek_nth_kind(1),
-            Some(TokenKind::LParen)
-                | Some(TokenKind::LBracket)
-                | Some(TokenKind::For)
-                | Some(TokenKind::Lt)
+            Some(TokenKind::LParen | TokenKind::LBracket | TokenKind::For | TokenKind::Lt)
         )
     }
 
@@ -595,7 +591,9 @@ impl<'src> Parser<'src> {
             None
         };
         let where_clause = where_clause.or_else(|| self.parse_where_clause_opt());
-        let end = return_ty.as_ref().map(|t| t.span()).unwrap_or(name.span);
+        let end = return_ty
+            .as_ref()
+            .map_or(name.span, ori_ast::ty::Type::span);
         Some(FuncSignature {
             visibility: vis,
             is_async: mods.is_async,
@@ -1150,7 +1148,7 @@ impl<'src> Parser<'src> {
                 i = self.skip_rough_type(i);
                 if matches!(
                     self.kind_at(i),
-                    Some(TokenKind::Ellipsis) | Some(TokenKind::DotDot)
+                    Some(TokenKind::Ellipsis | TokenKind::DotDot)
                 ) {
                     i = self.skip_trivia_after(i + 1);
                 }
@@ -1193,33 +1191,35 @@ impl<'src> Parser<'src> {
         }
         while matches!(
             self.kind_at(i),
-            Some(TokenKind::Ident)
-                | Some(TokenKind::Optional)
-                | Some(TokenKind::ResultKw)
-                | Some(TokenKind::List)
-                | Some(TokenKind::Map)
-                | Some(TokenKind::Set)
-                | Some(TokenKind::Range)
-                | Some(TokenKind::Void)
-                | Some(TokenKind::Tuple)
-                | Some(TokenKind::Lazy)
-                | Some(TokenKind::Any)
-                | Some(TokenKind::BoolTy)
-                | Some(TokenKind::IntTy)
-                | Some(TokenKind::Int8Ty)
-                | Some(TokenKind::Int16Ty)
-                | Some(TokenKind::Int32Ty)
-                | Some(TokenKind::Int64Ty)
-                | Some(TokenKind::U8Ty)
-                | Some(TokenKind::U16Ty)
-                | Some(TokenKind::U32Ty)
-                | Some(TokenKind::U64Ty)
-                | Some(TokenKind::FloatTy)
-                | Some(TokenKind::Float32Ty)
-                | Some(TokenKind::Float64Ty)
-                | Some(TokenKind::StringTy)
-                | Some(TokenKind::BytesTy)
-                | Some(TokenKind::SelfKw)
+            Some(
+                TokenKind::Ident
+                    | TokenKind::Optional
+                    | TokenKind::ResultKw
+                    | TokenKind::List
+                    | TokenKind::Map
+                    | TokenKind::Set
+                    | TokenKind::Range
+                    | TokenKind::Void
+                    | TokenKind::Tuple
+                    | TokenKind::Lazy
+                    | TokenKind::Any
+                    | TokenKind::BoolTy
+                    | TokenKind::IntTy
+                    | TokenKind::Int8Ty
+                    | TokenKind::Int16Ty
+                    | TokenKind::Int32Ty
+                    | TokenKind::Int64Ty
+                    | TokenKind::U8Ty
+                    | TokenKind::U16Ty
+                    | TokenKind::U32Ty
+                    | TokenKind::U64Ty
+                    | TokenKind::FloatTy
+                    | TokenKind::Float32Ty
+                    | TokenKind::Float64Ty
+                    | TokenKind::StringTy
+                    | TokenKind::BytesTy
+                    | TokenKind::SelfKw
+            )
         ) {
             i = self.skip_trivia_after(i + 1);
             if self.kind_at(i) == Some(&TokenKind::Dot) {
@@ -1257,10 +1257,10 @@ impl<'src> Parser<'src> {
         let mut depth = 0i32;
         while i < self.tokens.len() {
             match self.kind_at(i) {
-                Some(TokenKind::LParen) | Some(TokenKind::Lt) | Some(TokenKind::LBracket) => {
+                Some(TokenKind::LParen | TokenKind::Lt | TokenKind::LBracket) => {
                     depth += 1;
                 }
-                Some(TokenKind::RParen) | Some(TokenKind::Gt) | Some(TokenKind::RBracket) => {
+                Some(TokenKind::RParen | TokenKind::Gt | TokenKind::RBracket) => {
                     if depth == 0 {
                         return i;
                     }
@@ -1759,7 +1759,9 @@ impl<'src> Parser<'src> {
             } else {
                 None
             };
-            let end = return_ty.as_ref().map(|t| t.span()).unwrap_or(name.span);
+            let end = return_ty
+                .as_ref()
+                .map_or(name.span, ori_ast::ty::Type::span);
             Some(ExternMember::Func {
                 visibility: vis,
                 name,
@@ -1779,36 +1781,38 @@ impl<'src> Parser<'src> {
     }
 }
 
-fn is_import_alias_recovery_boundary(kind: Option<&TokenKind>) -> bool {
+const fn is_import_alias_recovery_boundary(kind: Option<&TokenKind>) -> bool {
     matches!(
         kind,
-        Some(TokenKind::Module)
-            | Some(TokenKind::Namespace)
-            | Some(TokenKind::Import)
-            | Some(TokenKind::Public)
-            | Some(TokenKind::Func)
-            | Some(TokenKind::Struct)
-            | Some(TokenKind::Enum)
-            | Some(TokenKind::Trait)
-            | Some(TokenKind::Apply)
-            | Some(TokenKind::Implement)
-            | Some(TokenKind::Alias)
-            | Some(TokenKind::Newtype)
-            | Some(TokenKind::Const)
-            | Some(TokenKind::Var)
-            | Some(TokenKind::Extern)
-            | Some(TokenKind::End)
-            | Some(TokenKind::Comma)
+        Some(
+            TokenKind::Module
+                | TokenKind::Namespace
+                | TokenKind::Import
+                | TokenKind::Public
+                | TokenKind::Func
+                | TokenKind::Struct
+                | TokenKind::Enum
+                | TokenKind::Trait
+                | TokenKind::Apply
+                | TokenKind::Implement
+                | TokenKind::Alias
+                | TokenKind::Newtype
+                | TokenKind::Const
+                | TokenKind::Var
+                | TokenKind::Extern
+                | TokenKind::End
+                | TokenKind::Comma
+        )
     )
 }
 
-fn param_has_default(kind: &ParamKind) -> bool {
+const fn param_has_default(kind: &ParamKind) -> bool {
     matches!(
         kind,
         ParamKind::Default(_) | ParamKind::DefaultAndContract(_, _)
     )
 }
 
-fn param_is_required(kind: &ParamKind) -> bool {
+const fn param_is_required(kind: &ParamKind) -> bool {
     matches!(kind, ParamKind::Required | ParamKind::Contract(_))
 }

@@ -34,17 +34,17 @@ pub enum SymbolKind {
 }
 
 impl SymbolKind {
-    pub fn display(&self) -> &'static str {
+    pub const fn display(&self) -> &'static str {
         match self {
-            SymbolKind::Function => "function",
-            SymbolKind::Method => "method",
-            SymbolKind::Struct => "struct",
-            SymbolKind::Enum => "enum",
-            SymbolKind::Trait => "trait",
-            SymbolKind::Variable => "variable",
-            SymbolKind::Parameter => "parameter",
-            SymbolKind::Field => "field",
-            SymbolKind::Import => "import",
+            Self::Function => "function",
+            Self::Method => "method",
+            Self::Struct => "struct",
+            Self::Enum => "enum",
+            Self::Trait => "trait",
+            Self::Variable => "variable",
+            Self::Parameter => "parameter",
+            Self::Field => "field",
+            Self::Import => "import",
         }
     }
 }
@@ -200,7 +200,7 @@ impl SemanticIndex {
 
         // Restrict to the current line so dots/import from earlier lines
         // do not leak into the context.
-        let line_start = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let line_start = before.rfind('\n').map_or(0, |i| i + 1);
         let line = &before[line_start..];
         let trimmed = line.trim_start();
 
@@ -290,8 +290,7 @@ impl SemanticIndex {
                     let alias = item
                         .alias
                         .as_ref()
-                        .map(|n| n.text.to_string())
-                        .unwrap_or_else(|| item.name.text.to_string());
+                        .map_or_else(|| item.name.text.to_string(), |n| n.text.to_string());
                     let selected_namespace = format!("{}.{}", namespace, item.name.text);
                     let selection = if let Some(item_alias) = item.alias.as_ref() {
                         format!("{} = {}", item.name.text, item_alias.text)
@@ -1118,7 +1117,7 @@ fn position_in_range(pos: Position, range: &Range) -> bool {
     !position_is_before(pos, range.start) && position_is_before(pos, range.end)
 }
 
-fn position_is_before(left: Position, right: Position) -> bool {
+const fn position_is_before(left: Position, right: Position) -> bool {
     left.line < right.line || (left.line == right.line && left.character < right.character)
 }
 

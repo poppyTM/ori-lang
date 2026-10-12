@@ -33,7 +33,7 @@ macro_rules! single_bracket_type {
     }};
 }
 
-impl<'src> Parser<'src> {
+impl Parser<'_> {
     pub fn parse_type(&mut self) -> Option<Type> {
         // Generic arguments nest arbitrarily (`list[list[list[...]]]`).
         if !self.enter_nesting() {
@@ -230,7 +230,7 @@ impl<'src> Parser<'src> {
                             args.push(self.parse_type()?);
                         }
                     }
-                    let end = args.last().map(|t| t.span()).unwrap_or(of_span);
+                    let end = args.last().map_or(of_span, ori_ast::ty::Type::span);
                     return Some(Type::Tuple(args, span.cover(end)));
                 }
                 let (args, end) = self.parse_type_arg_list_free()?;
@@ -253,7 +253,7 @@ impl<'src> Parser<'src> {
                 } else {
                     None
                 };
-                let end = return_ty.as_ref().map(|t| t.span()).unwrap_or(end_paren);
+                let end = return_ty.as_ref().map_or(end_paren, |t| t.span());
                 Some(Type::Func {
                     params,
                     return_ty,
@@ -470,7 +470,7 @@ impl<'src> Parser<'src> {
     }
 
     /// True when the current token can start a type (for of-form recovery).
-    fn kind_can_start_type(&self, kind: &TokenKind) -> bool {
+    const fn kind_can_start_type(&self, kind: &TokenKind) -> bool {
         matches!(
             kind,
             TokenKind::BoolTy

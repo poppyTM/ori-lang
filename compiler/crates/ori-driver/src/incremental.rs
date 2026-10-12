@@ -123,6 +123,7 @@ pub fn record_success(
 }
 
 /// Persist a successful build and the reusable object emitted for each module.
+///
 /// Artifact paths are deterministic, so a later build can reuse unchanged
 /// modules without trusting stale HIR or compiler-internal serialization.
 pub fn record_success_with_artifacts(
@@ -265,6 +266,7 @@ pub fn module_fingerprint(path: &Path) -> Result<String, String> {
 }
 
 /// Return the stable object path for a module in the current build context.
+///
 /// The interface fingerprint invalidates objects when a public signature or
 /// shared type layout changes, while implementation-only edits stay local.
 pub fn module_artifact_path(
@@ -323,6 +325,7 @@ fn update_cfg_manifest_fingerprint(digest: &mut Sha256, root: &Path) {
 }
 
 /// Fingerprint declarations that affect another module's generated code.
+///
 /// Function bodies are intentionally excluded: the owning module's source
 /// fingerprint covers them, while unchanged consumers can keep their object.
 pub fn interface_fingerprint(hir: &ori_hir::HirModule) -> String {
@@ -474,8 +477,7 @@ fn project_root(source_path: &Path) -> PathBuf {
         source_path
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| PathBuf::from("."))
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
     };
     for ancestor in start.ancestors() {
         if ancestor.join("ori.pkg.toml").is_file() || ancestor.join("ori.proj").is_file() {

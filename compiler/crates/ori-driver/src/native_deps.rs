@@ -19,7 +19,7 @@ pub struct ResolvedNativeLink {
 
 impl ResolvedNativeLink {
     /// Merge another resolved link specification into this one without duplicate entries.
-    pub fn merge(&mut self, other: ResolvedNativeLink) {
+    pub fn merge(&mut self, other: Self) {
         for dir in other.library_dirs {
             if !self.library_dirs.contains(&dir) {
                 self.library_dirs.push(dir);
@@ -237,8 +237,7 @@ fn resolve_via_pkg_config(
                         None
                     }
                 })
-                .map(|v| v.trim().to_string())
-                .unwrap_or_else(|| "not found".to_string());
+                .map_or_else(|| "not found".to_string(), |v| v.trim().to_string());
 
             return Err(format!(
                 "package.native_dependency_version_mismatch: native dependency `{}` requirement `{ver_req}` was not satisfied (installed: `{installed_version}`)",

@@ -34,7 +34,7 @@ pub fn qualified_ident_at_position(
         start = identifier_start;
     }
 
-    while let Some('.') = source[end..].chars().next() {
+    while source[end..].starts_with('.') {
         let after_dot = end + '.'.len_utf8();
         let Some((_, identifier_end)) = identifier_range_at_offset(source, after_dot) else {
             break;

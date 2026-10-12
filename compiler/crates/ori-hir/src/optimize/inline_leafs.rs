@@ -129,7 +129,7 @@ fn materialize_in_block(block: &mut HirBlock, leaves: &HashMap<SmolStr, LeafFn>,
     let mut stmts = Vec::with_capacity(block.stmts.len());
     for mut stmt in std::mem::take(&mut block.stmts) {
         nested_blocks(&mut stmt, &mut |block| {
-            materialize_in_block(block, leaves, next)
+            materialize_in_block(block, leaves, next);
         });
         let value = match &mut stmt {
             HirStmt::Let { value, .. } | HirStmt::Return(Some(value), _) | HirStmt::Expr(value) => {
@@ -952,7 +952,7 @@ fn block_has_using_or_await(block: &HirBlock) -> bool {
     })
 }
 
-fn expr_has_await(expr: &HirExpr) -> bool {
+const fn expr_has_await(expr: &HirExpr) -> bool {
     matches!(expr.kind, HirExprKind::Await(_))
 }
 
