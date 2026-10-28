@@ -2953,17 +2953,15 @@ end
         once.contains("    const job: task.Job[int] = task.spawn(() => 41)\n"),
         "task.spawn formatting: {once}"
     );
-    // Nested using: `using file` at 4, match at 4, case arm at 4, `using copy`
-    // (nested using) at 8 inside the case body. The formatter places `case`
-    // labels at the same indent as `match` (switch/case style) with bodies one
-    // level deeper.
+    // Nested using: `using file` and `match` at 4, `case` at 8, and the case
+    // body at 12; nested `using copy` follows the case body.
     assert!(
-        once.contains("    using file: fs.File = try fs.open_read(path)\n    match fs.read(file, 100)\n    case ok(data):\n        using copy: fs.File = try fs.open_write(path)\n        try fs.write(copy, data)\n        return ok(10)\n    case err(msg):\n        return err(msg)\n    end\n"),
+        once.contains("    using file: fs.File = try fs.open_read(path)\n    match fs.read(file, 100)\n        case ok(data):\n            using copy: fs.File = try fs.open_write(path)\n            try fs.write(copy, data)\n            return ok(10)\n        case err(msg):\n            return err(msg)\n    end\n"),
         "nested using + match arm indentation: {once}"
     );
-    // Multi-line match: `match` and `case` at 4, bodies at 8, `end` at 4.
+    // Multi-line match: `match` at 4, `case` at 8, bodies at 12, `end` at 4.
     assert!(
-        once.contains("    match flag\n    case true:\n        return 1\n    case false:\n        return 2\n    end\n"),
+        once.contains("    match flag\n        case true:\n            return 1\n        case false:\n            return 2\n    end\n"),
         "multi-line match indentation: {once}"
     );
 
