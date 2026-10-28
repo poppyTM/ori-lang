@@ -83,7 +83,7 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - **Recursive aggregate keys for `map`, `set`, and `graph`.** Equality for a
-  recursive enum/struct now calls the generated `__eq_helper_*` callback instead
+  non-generic recursive enum/struct now calls the generated `__eq_helper_*` callback instead
   of expanding inline during code generation, and the checker admits recursive
   structural equality coinductively. `Json.Arr(list[Json])` can now be used as a
   map key, set element, and graph node. Recursive collection fields still hash
