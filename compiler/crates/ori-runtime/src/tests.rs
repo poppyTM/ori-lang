@@ -9,6 +9,20 @@ static TEST_DTOR_CALLS: AtomicUsize = AtomicUsize::new(0);
 static TEST_EXECUTOR_CALLBACKS: AtomicUsize = AtomicUsize::new(0);
 static TEST_ARC_LOCK: Mutex<()> = Mutex::new(());
 
+/// The I/O reactor releases its owned future reference just after publishing
+/// the terminal status. Wait briefly for that release before asserting that the
+/// heap is empty; otherwise the checker can observe a transient allocation.
+fn wait_for_live_allocations(expected: i64) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while unsafe { ori_arc_live_allocations() } != expected {
+        if std::time::Instant::now() >= deadline {
+            break;
+        }
+        std::thread::yield_now();
+    }
+    assert_eq!(unsafe { ori_arc_live_allocations() }, expected);
+}
+
 #[test]
 fn exported_runtime_version_queries_are_stable_and_nul_terminated() {
     let runtime_version = unsafe { CStr::from_ptr(ori_rt_version()) };
@@ -2410,7 +2424,7 @@ fn io_reactor_contains_panicking_jobs_and_keeps_processing() {
         assert_eq!(ori_task_block_on(succeeded), 7);
         assert_eq!(ori_task_last_await_status(), 1);
         ori_arc_release(succeeded as *mut u8);
-        assert_eq!(ori_arc_live_allocations(), 0);
+        wait_for_live_allocations(0);
     }
 }
 
