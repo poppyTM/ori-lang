@@ -158,7 +158,7 @@ module).
 - [ ] Prefer indexed iteration over `for item in list[string]` in Layer 2/3
   stdlib (ARC loop binding still fragile for managed string elements).
 - [ ] Map/set/graph modules: use concrete key types (`string`, `int`) when
-  performance matters; non-recursive structural map/set/hash-table keys now
+  performance matters; structural map/set/hash-table keys, including recursive aggregates, now
   use generated native hash callbacks, while an optional user
   `hash(self) -> int` method on `Hashable` overrides that callback. Explicit
   non-structural equality without `hash` keeps a constant-hash correctness

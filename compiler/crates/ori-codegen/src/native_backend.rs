@@ -7828,6 +7828,89 @@ impl<'a> FuncCodegen<'a> {
         self.type_supports_equality(&Ty::Named(def_id, Vec::new()), &mut Vec::new())
     }
 
+    /// True when `def_id` reaches itself through fields/containers. Only
+    /// these types need the callback-based equality path; non-recursive
+    /// aggregates keep the existing inline expansion, including generic
+    /// instantiations whose concrete args are known at the call site.
+    fn type_is_recursive(&self, def_id: ori_types::DefId) -> bool {
+        fn mentions(
+            this: &FuncCodegen<'_>,
+            ty: &Ty,
+            target: ori_types::DefId,
+            visiting: &mut Vec<ori_types::DefId>,
+        ) -> bool {
+            match ty {
+                Ty::Named(id, args) => {
+                    if *id == target {
+                        return true;
+                    }
+                    if visiting.contains(id) {
+                        return false;
+                    }
+                    visiting.push(*id);
+                    let found = this.struct_layouts.get(id).is_some_and(|layout| {
+                        layout.fields.iter().any(|(_, field)| {
+                            let concrete = substitute_ty_params(&field.ty, args);
+                            mentions(this, &concrete, target, visiting)
+                        })
+                    }) || this.enum_layouts.get(id).is_some_and(|layout| {
+                        layout.variants.values().any(|variant| {
+                            variant.fields.fields.iter().any(|(_, field)| {
+                                let concrete = substitute_ty_params(&field.ty, args);
+                                mentions(this, &concrete, target, visiting)
+                            })
+                        })
+                    });
+                    visiting.pop();
+                    found
+                }
+                Ty::Optional(inner)
+                | Ty::List(inner)
+                | Ty::Buffer(inner)
+                | Ty::Slice(inner)
+                | Ty::Set(inner)
+                | Ty::Range(inner)
+                | Ty::Lazy(inner)
+                | Ty::Future(inner)
+                | Ty::TaskJob(inner)
+                | Ty::Channel(inner) => mentions(this, inner, target, visiting),
+                Ty::Result(ok, err) | Ty::Map(ok, err) => {
+                    mentions(this, ok, target, visiting) || mentions(this, err, target, visiting)
+                }
+                Ty::Tuple(items) => items
+                    .iter()
+                    .any(|item| mentions(this, item, target, visiting)),
+                Ty::Array(elem, _) | Ty::Simd(elem, _) => mentions(this, elem, target, visiting),
+                Ty::Func { params, ret } => {
+                    params
+                        .iter()
+                        .any(|param| mentions(this, param, target, visiting))
+                        || mentions(this, ret, target, visiting)
+                }
+                Ty::Opaque { args, .. } => {
+                    args.iter().any(|arg| mentions(this, arg, target, visiting))
+                }
+                _ => false,
+            }
+        }
+
+        let mut visiting = vec![def_id];
+        self.struct_layouts.get(&def_id).is_some_and(|layout| {
+            layout
+                .fields
+                .iter()
+                .any(|(_, field)| mentions(self, &field.ty, def_id, &mut visiting))
+        }) || self.enum_layouts.get(&def_id).is_some_and(|layout| {
+            layout.variants.values().any(|variant| {
+                variant
+                    .fields
+                    .fields
+                    .iter()
+                    .any(|(_, field)| mentions(self, &field.ty, def_id, &mut visiting))
+            })
+        })
+    }
+
     fn type_supports_equality(&self, ty: &Ty, visiting: &mut Vec<ori_types::DefId>) -> bool {
         match ty {
             Ty::Void
@@ -7862,13 +7945,10 @@ impl<'a> FuncCodegen<'a> {
             }
             Ty::Named(def_id, args) => {
                 if visiting.contains(def_id) {
-                    // Recursive aggregates cannot be expanded into an
-                    // inline equality helper: doing so would recurse during
-                    // code generation (for example `json.Value` contains
-                    // `list[json.Value]`). A future cycle-aware helper can
-                    // handle these by calling through an existing callback;
-                    // for now the generated helper reports unsupported.
-                    return false;
+                    // The generated equality helper calls through the same
+                    // callback instead of expanding inline, so a recursive
+                    // aggregate is supported without compile-time recursion.
+                    return true;
                 }
                 visiting.push(*def_id);
                 let ok = if let Some(layout) = self.struct_layouts.get(def_id) {
@@ -18133,6 +18213,25 @@ impl<'a> FuncCodegen<'a> {
                         let call = self.builder.ins().call(fref, &[lv, rv]);
                         return Ok(self.builder.inst_results(call)[0]);
                     }
+                    // Prefer the generated equality helper for structural
+                    // aggregates. Besides avoiding duplicate code, this is
+                    // what makes recursive types finite: a field of the same
+                    // type calls back into the helper instead of expanding
+                    // equality during code generation.
+                    let helper_name = format!("__eq_helper_struct_{}", def_id.0);
+                    let enum_helper_name = format!("__eq_helper_enum_{}", def_id.0);
+                    let helper = if args.is_empty() && self.type_is_recursive(*def_id) {
+                        self.func_refs
+                            .get(helper_name.as_str())
+                            .or_else(|| self.func_refs.get(enum_helper_name.as_str()))
+                            .copied()
+                    } else {
+                        None
+                    };
+                    if let Some(fref) = helper {
+                        let call = self.builder.ins().call(fref, &[lv, rv]);
+                        return Ok(self.builder.inst_results(call)[0]);
+                    }
                     if self.enum_layouts.contains_key(def_id) {
                         return self.emit_enum_equality(lv, rv, *def_id, args, true);
                     }
@@ -18188,6 +18287,22 @@ impl<'a> FuncCodegen<'a> {
                         })?;
                         self.emit_arc_retain_if_managed(ty, lv)?;
                         self.emit_arc_retain_if_managed(ty, rv)?;
+                        let call = self.builder.ins().call(fref, &[lv, rv]);
+                        let result = self.builder.inst_results(call)[0];
+                        let zero = self.builder.ins().iconst(types::I8, 0);
+                        return Ok(self.builder.ins().icmp(IntCC::Equal, result, zero));
+                    }
+                    let helper_name = format!("__eq_helper_struct_{}", def_id.0);
+                    let enum_helper_name = format!("__eq_helper_enum_{}", def_id.0);
+                    let helper = if args.is_empty() && self.type_is_recursive(*def_id) {
+                        self.func_refs
+                            .get(helper_name.as_str())
+                            .or_else(|| self.func_refs.get(enum_helper_name.as_str()))
+                            .copied()
+                    } else {
+                        None
+                    };
+                    if let Some(fref) = helper {
                         let call = self.builder.ins().call(fref, &[lv, rv]);
                         let result = self.builder.inst_results(call)[0];
                         let zero = self.builder.ins().iconst(types::I8, 0);

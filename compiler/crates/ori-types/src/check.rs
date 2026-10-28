@@ -4999,7 +4999,10 @@ impl<'a> Checker<'a> {
         visiting_named: &mut Vec<DefId>,
     ) -> bool {
         if visiting_named.contains(&def_id) {
-            return false;
+            // Coinductive cycle: a recursive aggregate is equal when its
+            // recursive occurrences are equal. The runtime equality helper
+            // calls back through the generated callback, so this is finite.
+            return true;
         }
         let Some(def) = self.def_map.all_defs().get(def_id.0 as usize) else {
             return false;
@@ -5026,7 +5029,9 @@ impl<'a> Checker<'a> {
         visiting_named: &mut Vec<DefId>,
     ) -> bool {
         if visiting_named.contains(&def_id) {
-            return false;
+            // See supports_structural_struct_equality: recursion is checked
+            // coinductively and resolved by the generated native callback.
+            return true;
         }
         let Some(def) = self.def_map.all_defs().get(def_id.0 as usize) else {
             return false;

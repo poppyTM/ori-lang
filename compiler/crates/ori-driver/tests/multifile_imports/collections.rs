@@ -1100,6 +1100,67 @@ end
 }
 
 #[test]
+fn compile_runs_recursive_enum_key_in_map_set_and_graph_native() {
+    let dir = TestDir::new("recursive_enum_collection_key_native");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.core = core
+import ori.graph = graph
+import ori.io = io
+import ori.map = maps
+import ori.set = sets
+
+enum Json
+    Null
+    Num(value: int)
+    Arr(items: list[Json])
+end
+
+apply Json use core.Hashable
+end
+
+main()
+    const a: Json = Json.Arr(items: [Json.Num(value: 1), Json.Arr(items: [Json.Num(value: 2)])])
+    const b: Json = Json.Arr(items: [Json.Num(value: 1), Json.Arr(items: [Json.Num(value: 2)])])
+    const c: Json = Json.Arr(items: [Json.Num(value: 1), Json.Arr(items: [Json.Num(value: 3)])])
+
+    var index: map[Json, int] = maps.new()
+    maps.set(index, a, 7)
+    io.println(string(maps.contains(index, b)))
+    io.println(string(maps.contains(index, c)))
+
+    var unique: set[Json] = sets.new()
+    sets.add(unique, a)
+    sets.add(unique, b)
+    io.println(string(sets.len(unique)))
+
+    const network: graph.Graph[Json] = graph.new(false)
+    graph.add_node(network, a)
+    io.println(string(graph.has_node(network, b)))
+end
+"#,
+    );
+
+    let exe = dir.path(if cfg!(windows) {
+        "recursive_enum_key.exe"
+    } else {
+        "recursive_enum_key"
+    });
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "true\nfalse\n1\ntrue\n"
+    );
+}
+
+#[test]
 fn compile_runs_graph_enum_node_structural_equality_native() {
     let dir = TestDir::new("graph_enum_node_structural_equality_native");
     dir.write(

@@ -165,7 +165,7 @@ These types are built into the language and require no import.
 | `simd[T, N]` | Fixed-width SIMD vector (`simd[float32, 4]`, `simd[int32, lanes: 4]`) lowered to CPU vector registers — see below |
 | `buffer[T]` | Mutable, contiguous, fixed-length heap block — see below |
 | `slice[T]` | A read-only **window** over a `list[T]` — see below |
-| `map[K, V]` | Key-value mapping. `int` and `string` use native hashing; non-recursive user-defined struct or enum values with `Hashable` use a user `hash(self) -> int` method when present, otherwise generated structural hashing. Explicit, non-structural `Equatable` without `hash` uses a constant hash (`LANG-COLL-EQHASH-1`) |
+| `map[K, V]` | Key-value mapping. `int` and `string` use native hashing; user-defined struct or enum values with `Hashable` use a user `hash(self) -> int` method when present, otherwise generated structural hashing, including recursive aggregates through generated callback equality. Explicit, non-structural `Equatable` without `hash` uses a constant hash (`LANG-COLL-EQHASH-1`) |
 | `set[T]` | Unordered unique values. `int` and `string` use native hashing; non-recursive user-defined struct or enum values with `Hashable` use a user `hash(self) -> int` method when present, otherwise generated structural hashing. Explicit, non-structural `Equatable` without `hash` uses a constant hash (`LANG-COLL-EQHASH-1`) |
 | `graph.Graph[T]` | Directed or undirected graph. `int` and `string` nodes use native equality; user-defined structs and non-recursive enums with `Hashable` dispatch structural or explicit `Equatable` after the first concrete node operation and preserve that callback through graph copies. |
 | `optional[T]` | A value that may be absent |

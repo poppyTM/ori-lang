@@ -197,20 +197,19 @@ that `Equatable.equals` considers equal must return the same hash. The compiler
 does not prove that invariant; violating it can make a key unreachable in a
 hash table.
 
-- `map` keys currently support `int`, `string`, or a non-recursive user-defined
-  type that implements `ori.core.Hashable` and has structural or explicit
-  `ori.core.Equatable`.
-- `set` elements currently support `int`, `string`, or a non-recursive
-  user-defined type that implements `ori.core.Hashable` and has structural or
-  explicit `ori.core.Equatable`.
+- `map` keys support `int`, `string`, or a user-defined type that implements
+  `ori.core.Hashable` and has structural or explicit `ori.core.Equatable`.
+- `set` elements support `int`, `string`, or a user-defined type that implements
+  `ori.core.Hashable` and has structural or explicit `ori.core.Equatable`.
 - For user-defined keys/elements, `Equatable.equals` is the native membership
   predicate, so distinct values that compare equal are treated as one key or
   element. A user-defined `hash(self) -> int` method on `Hashable` is used when
-  present; marker-only `Hashable` uses generated hashing for non-recursive
-  structural values (scalar/string/bytes fields and nested generated
-  aggregates). An explicit non-structural `Equatable` without `hash` safely
-  falls back to a constant hash. Recursive aggregate-key support and
-  benchmarked performance remain open.
+  present; marker-only `Hashable` uses generated hashing for structural values
+  (scalar/string/bytes fields and nested generated aggregates). Recursive
+  aggregates use generated callback equality and are admitted; their recursive
+  collection fields still contribute a constant hash, so collision behavior and
+  benchmarked performance remain open. An explicit non-structural `Equatable`
+  without `hash` safely falls back to a constant hash.
 - `graph.Graph[T]` uses the same `Equatable.equals` callback for user-defined
   struct and non-recursive enum nodes. Because `graph.new` is type-erased at the
   source boundary, the first concrete node operation attaches the callback;
@@ -761,8 +760,8 @@ Comparable contract is stable.
 `hash_table.HashTable[K,V]` is a public advanced API over the same native hash
 engine used by `map[K,V]`. It exists for explicit capacity control and for
 `get/remove` APIs that return `optional[V]`. Keys follow the same rule as
-`map`: use `int`, `string`, or a non-recursive user type with
-`ori.core.Hashable` plus structural or explicit `ori.core.Equatable`.
+`map`: use `int`, `string`, or a user type with `ori.core.Hashable` plus
+structural or explicit `ori.core.Equatable`.
 
 `graph.Graph[N]` is an opaque adjacency-list graph. `graph.new(true)` creates a
 directed graph; `graph.new(false)` creates an undirected graph. `graph.add_edge`
@@ -776,8 +775,8 @@ when the graph is undirected or cyclic. New code can use
 `graph.shortest_path` is unweighted BFS shortest path.
 `graph.shortest_weighted_path` uses stored edge weights.
 `for node in graph_value` iterates a snapshot of graph nodes.
-For user-defined struct and non-recursive enum nodes, `Equatable.equals` is used
-for node identity and edge endpoint matching. Since `graph.new` is type-erased,
+For user-defined struct and enum nodes, including recursive aggregates,
+`Equatable.equals` is used for node identity and edge endpoint matching. Since `graph.new` is type-erased,
 the first operation that carries a concrete node value installs this callback;
 subsequent operations must use a compatible node kind. `graph.clone` and
 `graph.transitive_closure` preserve the callback. Recursive/generic edge cases

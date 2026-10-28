@@ -84,11 +84,13 @@ installs that callback; equivalent values then share one node and undirected
 edge queries compare by value. `graph.clone` and `graph.transitive_closure`
 preserve the callback. Enums support structural `==`/`!=` directly and can be
 used as graph nodes when they carry `Hashable`; explicit `Equatable` still
-overrides structural equality. Non-recursive structural keys use generated
-native hash callbacks. A user-defined `hash(self) -> int` method on `Hashable`
-overrides the generated callback. If explicit `Equatable` is non-structural
-and no `hash` method is supplied, the runtime uses a constant-hash correctness
-fallback; recursive admission and performance tuning remain open.
+overrides structural equality. Structural keys, including recursive enum and struct aggregates, use generated
+native equality callbacks and hash callbacks. A user-defined `hash(self) -> int`
+method on `Hashable` overrides the generated callback. Recursive collection
+fields still contribute a constant hash, so collision behavior and benchmarked
+performance remain open. If explicit `Equatable` is non-structural and no
+`hash` method is supplied, the runtime uses a constant-hash correctness
+fallback.
 
 ## Contracts and variadic parameters
 

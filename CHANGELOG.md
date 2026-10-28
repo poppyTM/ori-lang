@@ -82,6 +82,13 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Recursive aggregate keys for `map`, `set`, and `graph`.** Equality for a
+  recursive enum/struct now calls the generated `__eq_helper_*` callback instead
+  of expanding inline during code generation, and the checker admits recursive
+  structural equality coinductively. `Json.Arr(list[Json])` can now be used as a
+  map key, set element, and graph node. Recursive collection fields still hash
+  as a constant (correct, collision-prone), so benchmarked hashing remains open.
+
 - **LSP editor-feature conformance.** The stdio E2E suite now exercises
   capability advertisement plus semantic tokens, inlay hints, signature help,
   and quick-fix code actions against a real `ori-lsp` subprocess. This closes
