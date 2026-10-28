@@ -8547,10 +8547,10 @@ test_formatting()
         check true
     end
     match 1
-    case 1:
-        check true
-    case else:
-        check false
+        case 1:
+            check true
+        case else:
+            check false
     end
 end
 "#
