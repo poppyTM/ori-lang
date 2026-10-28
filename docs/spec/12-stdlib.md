@@ -779,8 +779,10 @@ For user-defined struct and enum nodes, including recursive aggregates,
 `Equatable.equals` is used for node identity and edge endpoint matching. Since `graph.new` is type-erased,
 the first operation that carries a concrete node value installs this callback;
 subsequent operations must use a compatible node kind. `graph.clone` and
-`graph.transitive_closure` preserve the callback. Recursive/generic edge cases
-and linked-list complexity remain tracked by `LANG-GRAPH-LIST-1`.
+`graph.transitive_closure` preserve the callback. Generic helper functions with
+`Hashable`/`Equatable` where-clauses now pass the concrete node callback, and
+recursive aggregate nodes use that callback. Linked-list complexity is the
+documented `VecDeque`-backed contract above.
 
 `heap.Heap[T]` is an opaque min-heap. The smallest value according to the
 element ordering is returned first. The v1 runtime supports `int`, `string`,

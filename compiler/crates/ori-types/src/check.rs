@@ -1747,6 +1747,14 @@ impl<'a> Checker<'a> {
             );
         }
         self.push_scope();
+        // Where-clause constraints must be active while parameter and return
+        // types are lowered; `map[T, _]`/`graph.Graph[T]` validate `T` against
+        // the same bounds that the function declares.
+        let current_where_constraints = self.lower_current_where_constraints(func, &tp);
+        let prev_where_constraints = std::mem::replace(
+            &mut self.current_where_constraints,
+            current_where_constraints,
+        );
         // `self` exists only when declared: a method without an explicit
         // `self` parameter is an associated function and has no receiver.
         // (Explicit `self` params are bound below like any other parameter.)
@@ -1819,11 +1827,6 @@ impl<'a> Checker<'a> {
         let prev_func_def_id = self.current_func_def_id;
         let prev_func_is_generic = self.current_func_is_generic;
         let prev_async_depth = self.current_async_depth;
-        let current_where_constraints = self.lower_current_where_constraints(func, &tp);
-        let prev_where_constraints = std::mem::replace(
-            &mut self.current_where_constraints,
-            current_where_constraints,
-        );
         self.current_return_ty = Some(expected_ret.clone());
         self.current_func_def_id = if !has_implicit_self && !func.type_params.is_empty() {
             self.resolve_def_id(func.name.text.as_str())

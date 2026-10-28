@@ -1100,6 +1100,62 @@ end
 }
 
 #[test]
+fn compile_runs_generic_graph_helper_with_where_constraints_native() {
+    let dir = TestDir::new("generic_graph_where_constraints_native");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.core = core
+import ori.graph = graph
+import ori.io = io
+
+struct Node
+    id: int
+end
+
+apply Node use core.Hashable
+end
+
+apply Node use core.Equatable
+    equals(self, other: Node) -> bool
+        return self.id == other.id
+    end
+end
+
+add_node_generic for T: core.Hashable, T: core.Equatable (g: graph.Graph[T], value: T) -> bool
+    graph.add_node(g, value)
+    return graph.has_node(g, value)
+end
+
+main()
+    const g: graph.Graph[Node] = graph.new(false)
+    const a: Node = Node { id: 1 }
+    const b: Node = Node { id: 1 }
+    io.println(string(add_node_generic(g, a)))
+    io.println(string(graph.has_node(g, b)))
+end
+"#,
+    );
+
+    let exe = dir.path(if cfg!(windows) {
+        "generic_graph_where.exe"
+    } else {
+        "generic_graph_where"
+    });
+    let out = run_compile(&dir.path("main.orl"), Path::new(&exe)).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "true\ntrue\n"
+    );
+}
+
+#[test]
 fn compile_runs_recursive_enum_key_in_map_set_and_graph_native() {
     let dir = TestDir::new("recursive_enum_collection_key_native");
     dir.write(

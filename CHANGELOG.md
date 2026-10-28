@@ -12,6 +12,13 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Generic collection helpers honor `Hashable`/`Equatable` where-clauses.**
+  Where constraints are now active while parameter and return types are
+  lowered, so generic functions can declare `map[T, V]` or `graph.Graph[T]`
+  with `for T: Hashable, T: Equatable` and pass the concrete node callback at
+  the call site. Regression covers a generic graph helper with a user-defined
+  node.
+
 - **Security: refresh TLS and async runtime dependencies.** Updated `rustls`
   to 0.23.46, `rustls-webpki` to 0.103.16, `webpki-roots` to 1.0.10, and
   `tokio` to 1.54.1, clearing the RUSTSEC-2026-0346/0347/0348/0349/0381/0382/0386
