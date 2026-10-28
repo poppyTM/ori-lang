@@ -14,13 +14,13 @@ static TEST_ARC_LOCK: Mutex<()> = Mutex::new(());
 /// heap is empty; otherwise the checker can observe a transient allocation.
 fn wait_for_live_allocations(expected: i64) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-    while unsafe { ori_arc_live_allocations() } != expected {
+    while ori_arc_live_allocations() != expected {
         if std::time::Instant::now() >= deadline {
             break;
         }
         std::thread::yield_now();
     }
-    assert_eq!(unsafe { ori_arc_live_allocations() }, expected);
+    assert_eq!(ori_arc_live_allocations(), expected);
 }
 
 #[test]
