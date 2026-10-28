@@ -1295,3 +1295,144 @@ fn e2e_lsp_incremental_edit_completion() {
     lsp.stdin.take();
     let _ = wait_with_timeout(&mut lsp.child, Duration::from_secs(5));
 }
+
+/// A8 conformance: semantic tokens, inlay hints, signature help, and code
+/// actions must all answer over the real stdio protocol, not only in unit
+/// tests of their helpers.
+#[test]
+fn e2e_lsp_semantic_tokens_inlay_signature_and_code_actions() {
+    let dir = tempfile_dir();
+    let doc_uri = uri_for(&dir, "e2e_editor_features.orl");
+    let root_uri = uri_for(&dir, "");
+    let source = "module app.main\n\
+import ori.io = io\n\
+\n\
+double(n: int) -> int\n\
+    return n * 2\n\
+end\n\
+\n\
+main()\n\
+    const value: int = double(21)\n\
+    io.print(string(value))\n\
+end\n";
+
+    let mut lsp = LspClient::new().expect("spawn ori-lsp");
+    let init_id = lsp.request(
+        "initialize",
+        json!({"processId": null, "rootUri": root_uri, "capabilities": {}}),
+    );
+    let init = lsp.read_response(init_id, DEFAULT_TIMEOUT_MS);
+    assert!(
+        init["result"]["capabilities"]["semanticTokensProvider"].is_object(),
+        "server must advertise semantic tokens: {init}"
+    );
+    assert_eq!(
+        init["result"]["capabilities"]["inlayHintProvider"],
+        json!(true),
+        "server must advertise inlay hints: {init}"
+    );
+    assert!(
+        init["result"]["capabilities"]["signatureHelpProvider"].is_object(),
+        "server must advertise signature help: {init}"
+    );
+    lsp.notify("initialized", json!({}));
+    lsp.notify(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": doc_uri,
+                "languageId": "ori",
+                "version": 1,
+                "text": source,
+            },
+        }),
+    );
+
+    let tokens_id = lsp.request(
+        "textDocument/semanticTokens/full",
+        json!({"textDocument": {"uri": doc_uri}}),
+    );
+    let tokens = lsp.read_response(tokens_id, DEFAULT_TIMEOUT_MS);
+    let data = tokens["result"]["data"]
+        .as_array()
+        .unwrap_or_else(|| panic!("semantic tokens missing: {tokens}"));
+    assert!(!data.is_empty(), "semantic tokens must not be empty");
+    assert_eq!(data.len() % 5, 0, "semantic token payload must be 5-tuples");
+
+    let hints_id = lsp.request(
+        "textDocument/inlayHint",
+        json!({
+            "textDocument": {"uri": doc_uri},
+            "range": {
+                "start": {"line": 0, "character": 0},
+                "end": {"line": 11, "character": 0},
+            },
+        }),
+    );
+    let hints = lsp.read_response(hints_id, DEFAULT_TIMEOUT_MS);
+    let hints = hints["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("inlay hints missing: {hints}"));
+    assert!(
+        hints.iter().any(|hint| hint["label"]
+            .as_str()
+            .is_some_and(|label| label.contains("int"))),
+        "expected a type inlay hint: {hints:?}"
+    );
+
+    let call_byte = source.find("double(21)").expect("call expression") + "double(".len();
+    let (call_line, call_char) = utf16_position(source, call_byte);
+    let signature_id = lsp.request(
+        "textDocument/signatureHelp",
+        json!({
+            "textDocument": {"uri": doc_uri},
+            "position": {"line": call_line, "character": call_char},
+        }),
+    );
+    let signature = lsp.read_response(signature_id, DEFAULT_TIMEOUT_MS);
+    let signatures = signature["result"]["signatures"]
+        .as_array()
+        .unwrap_or_else(|| panic!("signature help missing: {signature}"));
+    assert!(
+        signatures.iter().any(|sig| sig["label"]
+            .as_str()
+            .is_some_and(|label| label.contains("double"))),
+        "expected double signature: {signatures:?}"
+    );
+
+    let line = source
+        .lines()
+        .position(|l| l.contains("const value"))
+        .unwrap() as u32;
+    let actions_id = lsp.request(
+        "textDocument/codeAction",
+        json!({
+            "textDocument": {"uri": doc_uri},
+            "range": {
+                "start": {"line": line, "character": 4},
+                "end": {"line": line, "character": 9},
+            },
+            "context": {
+                "diagnostics": [{
+                    "range": {
+                        "start": {"line": line, "character": 4},
+                        "end": {"line": line, "character": 9},
+                    },
+                    "severity": 2,
+                    "code": "type.unused_result",
+                    "source": "ori",
+                    "message": "unused result",
+                }],
+                "only": ["quickfix"],
+            },
+        }),
+    );
+    let actions = lsp.read_response(actions_id, DEFAULT_TIMEOUT_MS);
+    let actions = actions["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("code actions missing: {actions}"));
+    assert!(
+        actions.len() >= 2,
+        "expected discard and propagate quick fixes: {actions:?}"
+    );
+}

@@ -243,11 +243,11 @@ features:
     name: LSP, VS Code, Zed, and DAP debugger
     status: partial
     implementation: [compiler/crates/ori-lsp/src, extensions/vscode-orl, extensions/zed-ori]
-    tests: [compiler/crates/ori-driver/tests/doctor.rs, compiler/crates/ori-driver/tests/summary.rs]
+    tests: [compiler/crates/ori-driver/tests/doctor.rs, compiler/crates/ori-driver/tests/summary.rs, compiler/crates/ori-lsp/tests/e2e.rs]
     user_docs: [docs/guides/debugging.md, extensions/README.md, extensions/vscode-orl/README.md, extensions/zed-ori/README.md]
     reference: [docs/spec/14-backend-support.md]
     examples: [examples/README.md]
-    limitations: "Zed has no automatic debugger wiring in its current extension API. UTF-16 positions and incremental navigation have E2E coverage; resolver identity, snapshot-version publication, and semantic editor lint still need broader conformance evidence. Canonical S3 completion/hover is the implemented baseline."
+    limitations: "Zed has no automatic debugger wiring in its current extension API. UTF-16 positions, incremental navigation, semantic tokens, inlay hints, signature help, and quick-fix code actions now have E2E coverage. Resolver identity, snapshot-version publication, and semantic editor lint still need broader conformance evidence. Canonical S3 completion/hover is the implemented baseline."
 
   - id: tooling.quality-release
     name: Quality, security, package, and release gates

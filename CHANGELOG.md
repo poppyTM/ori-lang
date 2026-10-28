@@ -82,6 +82,12 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **LSP editor-feature conformance.** The stdio E2E suite now exercises
+  capability advertisement plus semantic tokens, inlay hints, signature help,
+  and quick-fix code actions against a real `ori-lsp` subprocess. This closes
+  the missing evidence for the editor features already implemented by the
+  server; resolver identity and snapshot-version publication remain separate.
+
 - **Compiler interaction, stress, and incremental test batteries.**
   - `compiler/crates/ori-driver/tests/feature_interaction_matrix.rs`: non-trivial pairwise subsystem combinations
     (`@align(N)` structs inside fixed-size arrays with arithmetic traits, generic traits with closures and `using`
