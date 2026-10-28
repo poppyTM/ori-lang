@@ -3167,6 +3167,39 @@ fn collect_general_async_plan(f: &HirFunc) -> Option<SimpleAsyncStateMachinePlan
     })
 }
 
+/// Return the element type of an optional-returning collection helper.
+fn optional_collection_elem(name: &str, args: &[HirArg]) -> Option<Ty> {
+    if !matches!(
+        name,
+        "ori_deque_front"
+            | "ori_deque_back"
+            | "ori_deque_pop_front"
+            | "ori_deque_pop_back"
+            | "ori_queue_peek"
+            | "ori_queue_dequeue"
+            | "ori_stack_peek"
+            | "ori_stack_pop"
+    ) {
+        return None;
+    }
+    match &args.first()?.value.ty {
+        Ty::Opaque {
+            kind: OpaqueTy::Deque | OpaqueTy::Queue | OpaqueTy::Stack,
+            args,
+        } => args.first().cloned(),
+        _ => None,
+    }
+}
+
+/// The runtime optional helpers use `{ i8, i64 }`. That layout already matches
+/// `optional[T]` when `T` is 64-bit or pointer-shaped.
+fn runtime_optional_layout_matches(elem_ty: &Ty, ptr_ty: types::Type) -> bool {
+    matches!(
+        cl_type(elem_ty, ptr_ty),
+        Some(types::I64) | Some(types::F64)
+    )
+}
+
 /// Layout of an `optional[T]`: `{ has_value: i8, [padding], value: T }`.
 fn optional_layout(inner: &Ty, ptr_ty: types::Type) -> (u32, u32) {
     // Returns (value_offset, total_size)
@@ -12096,6 +12129,16 @@ impl<'a> FuncCodegen<'a> {
                         } else {
                             self.builder.ins().store(MemFlags::new(), val, addr, 0);
                         }
+                    } else if let Ty::Buffer(elem_ty) = container_ty {
+                        // `buffer` owns a fixed-length block of i64 cells;
+                        // encode the scalar value before handing it to the
+                        // bounds-checked runtime setter.
+                        let set_ref = *self.func_refs.get("ori_buffer_set").ok_or_else(|| {
+                            "missing runtime function `ori_buffer_set`".to_string()
+                        })?;
+                        let idx = self.emit_expr(index)?;
+                        let stored = self.encode_list_storage_value(val, &elem_ty);
+                        self.builder.ins().call(set_ref, &[container, idx, stored]);
                     } else if let Ty::Map(key_ty, value_ty) = container_ty {
                         // `m["k"] = v` used to fall through this chain and emit
                         // nothing at all: the assignment silently did not happen.
@@ -15547,6 +15590,45 @@ impl<'a> FuncCodegen<'a> {
                                 args_v.push(value);
                             }
                         }
+                        // `buffer`/`slice` share the runtime's 64-bit storage
+                        // cell convention. Encode scalar writes before the
+                        // FFI call and decode scalar reads afterwards; the
+                        // element type is carried by the container argument,
+                        // with the expression type as a fallback for inferred
+                        // call results.
+                        let container_elem = args.first().and_then(|arg| match &arg.value.ty {
+                            Ty::Buffer(elem) | Ty::Slice(elem) => Some((**elem).clone()),
+                            Ty::Opaque {
+                                kind: OpaqueTy::Deque | OpaqueTy::Queue | OpaqueTy::Stack,
+                                args,
+                            } => args.first().cloned(),
+                            _ => None,
+                        });
+                        let storage_elem = container_elem.clone().or_else(|| match &expr.ty {
+                            Ty::Infer(_) | Ty::Error => None,
+                            ty => Some(ty.clone()),
+                        });
+                        if name.as_str() == "ori_buffer_set" && args_v.len() == 3 {
+                            if let Some(elem) = &storage_elem {
+                                args_v[2] = self.encode_list_storage_value(args_v[2], elem);
+                            }
+                        } else if name.as_str() == "ori_buffer_fill" && args_v.len() == 2 {
+                            if let Some(elem) = &storage_elem {
+                                args_v[1] = self.encode_list_storage_value(args_v[1], elem);
+                            }
+                        } else if matches!(
+                            name.as_str(),
+                            "ori_deque_push_front"
+                                | "ori_deque_push_back"
+                                | "ori_queue_enqueue"
+                                | "ori_stack_push"
+                        ) && args_v.len() == 2
+                        {
+                            if let Some(elem) = &container_elem {
+                                args_v[1] = self.encode_list_storage_value(args_v[1], elem);
+                            }
+                        }
+                        let optional_elem = optional_collection_elem(name, args);
                         if let Some(callback_id) = self.host_callback_ids.get(name) {
                             let callback_id =
                                 self.builder.ins().iconst(types::I64, *callback_id as i64);
@@ -15562,6 +15644,17 @@ impl<'a> FuncCodegen<'a> {
                             let res = self.builder.inst_results(call);
                             if res.is_empty() {
                                 self.builder.ins().iconst(types::I8, 0)
+                            } else if matches!(name.as_str(), "ori_buffer_get" | "ori_slice_get") {
+                                match &storage_elem {
+                                    Some(elem) => self.decode_list_storage_value(res[0], elem),
+                                    None => res[0],
+                                }
+                            } else if let Some(elem) = &optional_elem {
+                                if runtime_optional_layout_matches(elem, self.ptr_ty) {
+                                    res[0]
+                                } else {
+                                    self.emit_runtime_optional_reencode(res[0], elem)?
+                                }
                             } else {
                                 res[0]
                             }
@@ -15898,6 +15991,18 @@ impl<'a> FuncCodegen<'a> {
                         };
                         let addr = self.builder.ins().iadd(base, offset);
                         self.builder.ins().load(elem_cl, MemFlags::new(), addr, 0)
+                    }
+                    Ty::Buffer(elem_ty) => {
+                        // `buffer` stores one i64 cell per element. Read the
+                        // cell through the runtime (which performs the bounds
+                        // check) and decode narrow integers/floats back to the
+                        // declared element type.
+                        let get_ref = *self.func_refs.get("ori_buffer_get").ok_or_else(|| {
+                            "missing runtime function `ori_buffer_get`".to_string()
+                        })?;
+                        let call = self.builder.ins().call(get_ref, &[container, idx]);
+                        let stored = self.builder.inst_results(call)[0];
+                        self.decode_list_storage_value(stored, elem_ty)
                     }
                     Ty::String => {
                         let slice_ref =
@@ -17670,20 +17775,99 @@ impl<'a> FuncCodegen<'a> {
         }
     }
 
+    /// Convert `optional[i64]` returned by a collection runtime helper into
+    /// `optional[T]` with the layout the rest of codegen expects. Runtime
+    /// `deque`/`queue`/`stack` helpers return `OriOptionalInt`; for `f32`,
+    /// `u32`, `i8`/`i16` and `bool` that layout does not match `optional[T]`.
+    fn emit_runtime_optional_reencode(
+        &mut self,
+        pointer: ir::Value,
+        elem_ty: &Ty,
+    ) -> Result<ir::Value, String> {
+        let (runtime_payload_offset, _) = optional_layout(&Ty::Int, self.ptr_ty);
+        let has_value = self
+            .builder
+            .ins()
+            .load(types::I8, MemFlags::new(), pointer, 0);
+        let raw = self.builder.ins().load(
+            types::I64,
+            MemFlags::new(),
+            pointer,
+            runtime_payload_offset as i32,
+        );
+        let value = self.decode_list_storage_value(raw, elem_ty);
+        let (payload_offset, total) = optional_layout(elem_ty, self.ptr_ty);
+        let wrapper = self.malloc_bytes(total)?;
+        self.builder
+            .ins()
+            .store(MemFlags::new(), has_value, wrapper, 0);
+        self.builder
+            .ins()
+            .store(MemFlags::new(), value, wrapper, payload_offset as i32);
+        // The runtime wrapper was ARC-allocated and is no longer returned.
+        // Scalar payloads have no registered edge, so releasing it is enough.
+        if let Some(&release) = self.func_refs.get("ori_arc_release") {
+            self.builder.ins().call(release, &[pointer]);
+        }
+        Ok(wrapper)
+    }
+
+    /// Encode a scalar Ori value into the runtime's 64-bit storage cell.
+    ///
+    /// `OriList`, `OriBuffer`, their maps/sets, and slices all store elements
+    /// as `i64` cells. Narrow integers and floats therefore need an explicit
+    /// bit-preserving conversion at the boundary; without it Cranelift rejects
+    /// the call because the ABI value type (for example `f32`) does not match
+    /// the declared runtime parameter (`i64`).
     fn encode_list_storage_value(&mut self, value: ir::Value, ty: &Ty) -> ir::Value {
+        let actual = self.builder.func.dfg.value_type(value);
+        if actual == types::I64 {
+            return value;
+        }
         match ty {
             Ty::Bool | Ty::Int8 | Ty::U8 | Ty::Int16 | Ty::U16 | Ty::Int32 | Ty::U32 => {
                 self.builder.ins().uextend(types::I64, value)
+            }
+            Ty::Float32 => {
+                let bits = self
+                    .builder
+                    .ins()
+                    .bitcast(types::I32, MemFlags::new(), value);
+                self.builder.ins().uextend(types::I64, bits)
+            }
+            Ty::Float | Ty::Float64 => {
+                self.builder
+                    .ins()
+                    .bitcast(types::I64, MemFlags::new(), value)
             }
             _ => value,
         }
     }
 
+    /// Decode a 64-bit runtime storage cell back into the Ori value type.
+    ///
+    /// This is the inverse of [`Self::encode_list_storage_value`]. It is also
+    /// used by `buffer` and `slice` reads, which share the same cell layout.
     fn decode_list_storage_value(&mut self, value: ir::Value, ty: &Ty) -> ir::Value {
+        let actual = self.builder.func.dfg.value_type(value);
+        if actual != types::I64 {
+            return value;
+        }
         match ty {
             Ty::Bool | Ty::Int8 | Ty::U8 => self.builder.ins().ireduce(types::I8, value),
             Ty::Int16 | Ty::U16 => self.builder.ins().ireduce(types::I16, value),
             Ty::Int32 | Ty::U32 => self.builder.ins().ireduce(types::I32, value),
+            Ty::Float32 => {
+                let bits = self.builder.ins().ireduce(types::I32, value);
+                self.builder
+                    .ins()
+                    .bitcast(types::F32, MemFlags::new(), bits)
+            }
+            Ty::Float | Ty::Float64 => {
+                self.builder
+                    .ins()
+                    .bitcast(types::F64, MemFlags::new(), value)
+            }
             _ => value,
         }
     }

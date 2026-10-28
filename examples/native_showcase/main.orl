@@ -71,8 +71,8 @@ main()
     using resource: Resource = Resource { id: ResourceId(1) }
 
     const user: User = choose(
-        User { name: "Ada", role: "guest" },
-        User { name: "Grace", role: "admin" },
+    User { name: "Ada", role: "guest" },
+    User { name: "Grace", role: "admin" },
     )
     const { name, role } = user
     const boxed: any[Labelled] = user
@@ -88,24 +88,24 @@ main()
     io.print(f"{name} ({role})")
 
     match event(0, user)
-    case Started(label):
-        io.print(label)
-    case else:
-        io.print("bad")
+        case Started(label):
+            io.print(label)
+        case else:
+            io.print("bad")
     end
 
     match event(1, user)
-    case Assigned(user):
-        io.print(user.name)
-    case else:
-        io.print("bad")
+        case Assigned(user):
+            io.print(user.name)
+        case else:
+            io.print("bad")
     end
 
     match event(2, user)
-    case Pair(data: tuple(id, label)):
-        io.print(string(id))
-        io.print(label)
-    case else:
-        io.print("bad")
+        case Pair(data: tuple(id, label)):
+            io.print(string(id))
+            io.print(label)
+        case else:
+            io.print("bad")
     end
 end

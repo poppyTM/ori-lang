@@ -5791,6 +5791,18 @@ impl<'a> Checker<'a> {
             // A window carries the owner's element type.
             ("ori.list.window", Some(Ty::List(elem))) => ret = Ty::Slice(elem.clone()),
             ("ori.slice.get", Some(Ty::Slice(elem))) => ret = *elem.clone(),
+            // `buffer[T]` carries its element type in the same position as
+            // the list-backed collections. Resolve the generic return here so
+            // a call used as an argument (for example inside an f-string) does
+            // not leak `Infer` into HIR/codegen.
+            ("ori.buffer.get", Some(Ty::Buffer(elem))) => ret = *elem.clone(),
+            ("ori.buffer.as_slice", Some(Ty::Buffer(elem))) => ret = Ty::Slice(elem.clone()),
+            ("ori.buffer.set", Some(Ty::Buffer(elem))) => {
+                self.check_stdlib_arg_assignable(args, 2, elem);
+            }
+            ("ori.buffer.fill", Some(Ty::Buffer(elem))) => {
+                self.check_stdlib_arg_assignable(args, 1, elem);
+            }
             ("ori.list.pop", Some(Ty::List(elem))) => ret = *elem.clone(),
             ("ori.list.try_get" | "ori.list.try_pop", Some(Ty::List(elem))) => {
                 ret = Ty::Optional(elem.clone())

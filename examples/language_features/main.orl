@@ -68,12 +68,12 @@ end
 
 shape_area(s: Shape) -> int
     match s
-    case Circle(radius):
-        return radius * radius * 3
-    case Rectangle(width, height):
-        return width * height
-    case Triangle(base, height):
-        return (base * height) / 2
+        case Circle(radius):
+            return radius * radius * 3
+        case Rectangle(width, height):
+            return width * height
+        case Triangle(base, height):
+            return (base * height) / 2
     end
     return 0
 end
@@ -191,35 +191,35 @@ demo_optional_result()
     section("Optional and Result")
 
     match safe_divide(10, 3)
-    case ok(val):
-        io.println(f"  10 / 3 = {val}")
-    case err(msg):
-        io.println(f"  err: {msg}")
+        case ok(val):
+            io.println(f"  10 / 3 = {val}")
+        case err(msg):
+            io.println(f"  err: {msg}")
     end
 
     match safe_divide(10, 0)
-    case ok(val):
-        io.println(f"  10 / 0 = {val}")
-    case err(msg):
-        io.println(f"  10 / 0 err: {msg}")
+        case ok(val):
+            io.println(f"  10 / 0 = {val}")
+        case err(msg):
+            io.println(f"  10 / 0 err: {msg}")
     end
 
     const people = ["Ada", "Grace", "Margaret"]
 
     const grace = "Grace"
     match find_by_name(people, grace)
-    case some(idx):
-        io.println(f"  found Grace at index {idx}")
-    case none:
-        io.println("  Grace not found")
+        case some(idx):
+            io.println(f"  found Grace at index {idx}")
+        case none:
+            io.println("  Grace not found")
     end
 
     const linus = "Linus"
     match find_by_name(people, linus)
-    case some(idx):
-        io.println(f"  found Linus at index {idx}")
-    case none:
-        io.println("  Linus not found (expected)")
+        case some(idx):
+            io.println(f"  found Linus at index {idx}")
+        case none:
+            io.println("  Linus not found (expected)")
     end
 
     const ada = "Ada"

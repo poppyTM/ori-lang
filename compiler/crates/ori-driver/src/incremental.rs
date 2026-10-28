@@ -479,12 +479,22 @@ fn project_root(source_path: &Path) -> PathBuf {
             .filter(|parent| !parent.as_os_str().is_empty())
             .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
     };
+    // Make the search anchor absolute before walking ancestors. A relative
+    // path such as `src/main.orl` ends its ancestor chain at `""`; joining
+    // `ori.proj` onto that empty path resolves against the cwd and matches,
+    // but `canonicalize("")` then fails and the cache root becomes the empty
+    // path. Canonicalizing first avoids that ambiguity and also keeps the
+    // returned root stable for callers that scan or write `.ori/`.
+    let start = fs::canonicalize(&start).unwrap_or(start);
     for ancestor in start.ancestors() {
+        if ancestor.as_os_str().is_empty() {
+            continue;
+        }
         if ancestor.join("ori.pkg.toml").is_file() || ancestor.join("ori.proj").is_file() {
-            return fs::canonicalize(ancestor).unwrap_or_else(|_| ancestor.to_path_buf());
+            return ancestor.to_path_buf();
         }
     }
-    fs::canonicalize(&start).unwrap_or(start)
+    start
 }
 
 fn fingerprint(source_path: &Path, options: BuildOptions) -> Result<String, String> {

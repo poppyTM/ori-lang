@@ -20,21 +20,21 @@ print_report(log_path: string, output_path: string, text: string)
 
     if output_path != ""
         match fs.write_text_result(output_path, rendered)
-        case ok(_):
-            io.println("report written to " + output_path)
-        case err(message):
-            io.eprintln("cannot write report: " + message)
+            case ok(_):
+                io.println("report written to " + output_path)
+            case err(message):
+                io.eprintln("cannot write report: " + message)
         end
     end
 end
 
 load_report(log_path: string, output_path: string) -> result[void, string]
     match fs.read_text(log_path)
-    case ok(text):
-        print_report(log_path, output_path, text)
-        return ok()
-    case err(message):
-        return err(message)
+        case ok(text):
+            print_report(log_path, output_path, text)
+            return ok()
+        case err(message):
+            return err(message)
     end
     return err("unable to read log")
 end
@@ -46,22 +46,22 @@ main()
     const launched_by_ori: bool = first_arg == "run"
     const log_path: string = if launched_by_ori then "examples/linux_log_report/sample.log" else first_arg
     const output_path: string = if launched_by_ori
-        then ""
-        else args.get_or(2, "")
+    then ""
+    else args.get_or(2, "")
     const selected_log: string = if log_path == "" then DEFAULT_LOG else log_path
     match load_report(selected_log, output_path)
-    case ok(_):
-    case err(message):
-        if launched_by_ori or selected_log == DEFAULT_LOG
-            const fallback: string = path.join(["..", "examples", "linux_log_report", "sample.log"])
-            match load_report(fallback, output_path)
-            case ok(_):
-            case err(fallback_message):
+        case ok(_):
+        case err(message):
+            if launched_by_ori or selected_log == DEFAULT_LOG
+                const fallback: string = path.join(["..", "examples", "linux_log_report", "sample.log"])
+                match load_report(fallback, output_path)
+                    case ok(_):
+                    case err(fallback_message):
+                        io.eprintln("cannot read " + selected_log + ": " + message)
+                        io.eprintln("fallback failed: " + fallback_message)
+                end
+            else
                 io.eprintln("cannot read " + selected_log + ": " + message)
-                io.eprintln("fallback failed: " + fallback_message)
             end
-        else
-            io.eprintln("cannot read " + selected_log + ": " + message)
-        end
     end
 end

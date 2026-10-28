@@ -4,10 +4,10 @@ import ori.io as io
 
 main()
     io.println("Hello, Ori Language!")
-    
+
     const name: string = "Developer"
     io.println(f"Welcome, {name}!")
-    
+
     io.println("Calculating something...")
     const ans: int = 21 * 2
     io.println(f"The answer is: {ans}")

@@ -19,7 +19,7 @@ main()
     const b2: bytes = " Language".to_bytes()
     const combined: bytes = b1.concat(b2)
     io.println(f"Combined Length: {combined.len()}")
-    
+
     -- Decoding back to string
     match combined.decode_utf8()
         case ok(s):

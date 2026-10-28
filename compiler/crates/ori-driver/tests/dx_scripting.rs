@@ -285,6 +285,205 @@ end
 }
 
 #[test]
+fn e2e_buffer_scalar_widths_indexing_and_slice() {
+    let dir = TestDir::new("buffer_scalar_widths");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+imports
+    ori.buffer = buf
+    ori.slice = sl
+    ori.io = io
+end
+
+main()
+    var b: buffer[u32] = buf.new(3)
+    b[0] = 10u32
+    b[0] += 5u32
+    b[1] = 20u32
+    buf.set(b, 2, 30u32)
+    const window: slice[u32] = buf.as_slice(b)
+    io.println(f"{b[0]} {buf.get(b, 1)} {sl.get(window, 2)}")
+
+    var f: buffer[float32] = buf.new(2)
+    buf.fill(f, 1.5f32)
+    f[1] = 2.5f32
+    io.println(f"{f[0]} {f[1]}")
+
+    var g: buffer[float64] = buf.new(1)
+    g[0] = 3.25
+    io.println(f"{g[0]}")
+
+    var h: buffer[bool] = buf.new(1)
+    h[0] = true
+    io.println(f"{h[0]}")
+
+    const xs: list[float32] = [1.5f32, 2.5f32]
+    const ys: list[float64] = [3.5, 4.5]
+    io.println(f"{xs[0]} {ys[1]}")
+end
+"#,
+    );
+
+    let expected = "15 20 30\n1.5 2.5\n3.25\ntrue\n1.5 4.5\n";
+    for (label, env, value) in [("JIT", "ORI_USE_JIT", "1"), ("AOT", "ORI_USE_AOT", "1")] {
+        let output = Command::new(ori_exe())
+            .arg("run")
+            .arg(dir.path("main.orl"))
+            .env(env, value)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .expect("failed to spawn ori run for scalar buffer test");
+
+        let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "{label} scalar buffer test failed:\nstdout: {stdout}\nstderr: {stderr}"
+        );
+        assert_eq!(stdout, expected, "{label} scalar buffer output");
+    }
+}
+
+#[test]
+fn e2e_deque_queue_stack_scalar_storage() {
+    let dir = TestDir::new("collection_scalar_storage");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+imports
+    ori.deque = deques
+    ori.queue = queues
+    ori.stack = stacks
+    ori.io = io
+end
+
+main()
+    var d: deques.Deque[float32] = deques.new()
+    deques.push_back(d, 2.5f32)
+    const f: optional[float32] = deques.front(d)
+    match f
+    case some(v): io.println(f"{v}")
+    case none: io.println("none")
+    end
+    const p: optional[float32] = deques.pop_back(d)
+    match p
+    case some(v): io.println(f"{v}")
+    case none: io.println("none")
+    end
+
+    var q: queues.Queue[float64] = queues.new()
+    queues.enqueue(q, 3.5)
+    const qp: optional[float64] = queues.peek(q)
+    match qp
+    case some(v): io.println(f"{v}")
+    case none: io.println("none")
+    end
+    const qd: optional[float64] = queues.dequeue(q)
+    match qd
+    case some(v): io.println(f"{v}")
+    case none: io.println("none")
+    end
+
+    var s: stacks.Stack[float32] = stacks.new()
+    stacks.push(s, 5.5f32)
+    const sp: optional[float32] = stacks.peek(s)
+    match sp
+    case some(v): io.println(f"{v}")
+    case none: io.println("none")
+    end
+    const so: optional[float32] = stacks.pop(s)
+    match so
+    case some(v): io.println(f"{v}")
+    case none: io.println("none")
+    end
+end
+"#,
+    );
+
+    let expected = "2.5\n2.5\n3.5\n3.5\n5.5\n5.5\n";
+    for (label, env, value) in [("JIT", "ORI_USE_JIT", "1"), ("AOT", "ORI_USE_AOT", "1")] {
+        let output = Command::new(ori_exe())
+            .arg("run")
+            .arg(dir.path("main.orl"))
+            .env(env, value)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .expect("failed to spawn scalar collection test");
+        let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "{label} scalar collection test failed:\nstdout: {stdout}\nstderr: {stderr}"
+        );
+        assert_eq!(stdout, expected, "{label} scalar collection output");
+    }
+}
+
+#[test]
+fn e2e_compile_relative_nested_source_path() {
+    let dir = TestDir::new("relative_nested_compile");
+    dir.write(
+        "ori.proj",
+        r#"manifest = 1
+name = "path.test"
+version = "0.1.0"
+kind = "app"
+entry = "src/main.orl"
+
+[source]
+root_namespace = "app"
+"#,
+    );
+    dir.write(
+        "src/main.orl",
+        r#"module app.main
+
+import ori.io = io
+
+main()
+    io.println("relative path ok")
+end
+"#,
+    );
+
+    let output_path = dir.path("app");
+    let output = Command::new(ori_exe())
+        .current_dir(&dir.path)
+        .arg("compile")
+        .arg("src/main.orl")
+        .arg("--out")
+        .arg(&output_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("failed to spawn relative compile");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "relative nested compile failed:\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        output_path.is_file(),
+        "relative nested compile did not produce {}",
+        output_path.display()
+    );
+    assert!(
+        !stderr.contains("input_scan_failed"),
+        "relative nested compile leaked a cache scan failure: {stderr}"
+    );
+}
+
+#[test]
 fn e2e_buffer_stdlib_helpers() {
     let dir = TestDir::new("buffer_helpers");
     dir.write(

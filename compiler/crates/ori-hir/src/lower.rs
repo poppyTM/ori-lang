@@ -512,6 +512,16 @@ fn specialized_stdlib_call_ret_ty(c_name: &str, args: &[HirArg], fallback: Ty) -
                 _ => None,
             })
             .unwrap_or(fallback),
+        // `buffer.get` returns the element type carried by the receiver, not
+        // the runtime's raw i64 ABI type. Keep the HIR type concrete so an
+        // interpolation or another inferred context never sees `Infer`.
+        "ori.buffer.get" => args
+            .first()
+            .and_then(|arg| match &arg.value.ty {
+                Ty::Buffer(elem) => Some((**elem).clone()),
+                _ => None,
+            })
+            .unwrap_or(fallback),
         "ori.buffer.as_slice" => args
             .first()
             .and_then(|arg| match &arg.value.ty {
@@ -3219,7 +3229,7 @@ impl Lowerer<'_> {
             Stmt::CompoundAssign(c) => {
                 // Lower `x += v` to `x = x + v` for v1
                 let lvalue = lower_lvalue(&c.lvalue, self, tp);
-                let cur = lvalue_to_expr(&lvalue, c.span);
+                let cur = lvalue_to_expr(&lvalue, self, c.span);
                 let rhs = self.lower_expr(&c.value, tp);
                 let op = compound_op_to_binary(c.op);
                 let ty = binary_result_ty(op, &cur.ty, &rhs.ty);
@@ -5783,7 +5793,7 @@ fn for_second_binding_ty(ty: &Ty) -> Ty {
 
 fn index_result_ty(ty: &Ty) -> Ty {
     match ty {
-        Ty::List(t) | Ty::Set(t) | Ty::Array(t, _) | Ty::Simd(t, _) => *t.clone(),
+        Ty::List(t) | Ty::Set(t) | Ty::Array(t, _) | Ty::Simd(t, _) | Ty::Buffer(t) => *t.clone(),
         Ty::Map(_, v) => *v.clone(),
         Ty::String => Ty::String,
         Ty::Tuple(elems) => elems.first().cloned().unwrap_or(Ty::Infer(0)),
@@ -5887,32 +5897,46 @@ fn lower_lvalue(lv: &ori_ast::stmt::LValue, lowerer: &mut Lowerer, tp: &[SmolStr
     }
 }
 
-fn lvalue_to_expr(lv: &HirLValue, span: Span) -> HirExpr {
+/// Rebuild the read half of a compound assignment (`x += v` → `x = x + v`).
+///
+/// The old helper assigned `Infer` to every node, which made codegen unable to
+/// select the list/array/buffer/map index path for `xs[i] += v`. Resolve the
+/// base and index types from the lowering scope; field access falls back to the
+/// declared struct signature when available.
+fn lvalue_to_expr(lv: &HirLValue, lowerer: &Lowerer<'_>, span: Span) -> HirExpr {
     match lv {
         HirLValue::Var(name) => HirExpr {
             kind: HirExprKind::Var(name.clone()),
-            ty: Ty::Infer(0),
+            ty: lowerer.lookup_var(name).unwrap_or(Ty::Infer(0)),
             span,
         },
         HirLValue::Field { base, field } => {
-            let obj = lvalue_to_expr(base, span);
+            let obj = lvalue_to_expr(base, lowerer, span);
+            let ty = match &obj.ty {
+                Ty::Named(def_id, args) => lowerer
+                    .struct_field_ty(*def_id, field)
+                    .map(|field_ty| substitute_ty_params(&field_ty, args))
+                    .unwrap_or(Ty::Infer(0)),
+                _ => Ty::Infer(0),
+            };
             HirExpr {
                 kind: HirExprKind::Field {
                     object: Box::new(obj),
                     field: field.clone(),
                 },
-                ty: Ty::Infer(0),
+                ty,
                 span,
             }
         }
         HirLValue::Index { base, index } => {
-            let obj = lvalue_to_expr(base, span);
+            let obj = lvalue_to_expr(base, lowerer, span);
+            let ty = index_result_ty(&obj.ty);
             HirExpr {
                 kind: HirExprKind::Index {
                     object: Box::new(obj),
                     index: index.clone(),
                 },
-                ty: Ty::Infer(0),
+                ty,
                 span,
             }
         }

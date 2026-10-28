@@ -143,11 +143,31 @@ pub fn format_source_text(source: &str) -> String {
             continue;
         }
 
-        if should_dedent_before(line) {
-            indent = indent.saturating_sub(1);
-            if closes_current_block_before_opening(line) {
+        if is_end_line(line) {
+            if block_stack.last() == Some(&BlockKind::Case) {
+                // `end` closes the current case body and the enclosing match.
+                indent = indent.saturating_sub(2);
+                block_stack.pop();
+                if block_stack.last() == Some(&BlockKind::Match) {
+                    block_stack.pop();
+                }
+            } else {
+                indent = indent.saturating_sub(1);
                 block_stack.pop();
             }
+        } else if line == "}" || line == "]" {
+            indent = indent.saturating_sub(1);
+            block_stack.pop();
+        } else if line.starts_with("case ") {
+            // The first case follows `match` and belongs one level inside it;
+            // later cases close the previous case body before printing.
+            if block_stack.last() == Some(&BlockKind::Case) {
+                indent = indent.saturating_sub(1);
+                block_stack.pop();
+            }
+        } else if line == "else" || line.starts_with("elif ") {
+            indent = indent.saturating_sub(1);
+            block_stack.pop();
         }
 
         out.push_str(&"    ".repeat(indent));
@@ -167,15 +187,12 @@ pub fn format_source_text(source: &str) -> String {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BlockKind {
     Trait,
+    Enum,
+    Function,
+    Imports,
+    Match,
+    Case,
     Other,
-}
-
-fn should_dedent_before(line: &str) -> bool {
-    is_end_line(line) || line == "else" || line.starts_with("elif ") || line.starts_with("case ")
-}
-
-fn closes_current_block_before_opening(line: &str) -> bool {
-    is_end_line(line) || line == "else" || line.starts_with("elif ") || line.starts_with("case ")
 }
 
 fn is_end_line(line: &str) -> bool {
@@ -187,21 +204,30 @@ fn opens_block_after(line: &str, next_line: Option<&str>, block_stack: &[BlockKi
         return false;
     }
 
-    line == "else"
+    line == "imports"
+        || line.ends_with('{')
+        || line.ends_with('[')
+        || line == "else"
         || line.starts_with("elif ")
         || line.starts_with("case ")
+        || is_match_head(line)
         || line == "loop"
         || line.starts_with("if ")
         || line.starts_with("while ")
         || line.starts_with("for ")
         || line.starts_with("repeat ")
-        || line.starts_with("match ")
         || declaration_opens_block(line, next_line, block_stack)
 }
 
 fn declaration_opens_block(line: &str, next_line: Option<&str>, block_stack: &[BlockKind]) -> bool {
     let bare = declaration_line_without_modifiers(line);
     let is_function = is_function_decl_line(bare);
+    // A call-shaped line inside a function body is an expression, not a nested
+    // declaration. Without this guard every `foo()` statement opened a fake
+    // block and the function's `end` drifted right.
+    if is_function && (inside_function(block_stack) || inside_enum(block_stack)) {
+        return false;
+    }
     if is_function && inside_trait(block_stack) {
         return trait_function_has_body(next_line);
     }
@@ -219,6 +245,14 @@ fn inside_trait(block_stack: &[BlockKind]) -> bool {
     block_stack.contains(&BlockKind::Trait)
 }
 
+fn inside_function(block_stack: &[BlockKind]) -> bool {
+    block_stack.contains(&BlockKind::Function)
+}
+
+fn inside_enum(block_stack: &[BlockKind]) -> bool {
+    block_stack.contains(&BlockKind::Enum)
+}
+
 fn trait_function_has_body(next_line: Option<&str>) -> bool {
     let Some(next_line) = next_line else {
         return false;
@@ -233,8 +267,19 @@ fn trait_function_has_body(next_line: Option<&str>) -> bool {
 }
 
 fn block_kind_for(line: &str) -> BlockKind {
-    if declaration_line_without_modifiers(line).starts_with("trait ") {
+    let bare = declaration_line_without_modifiers(line);
+    if bare.starts_with("trait ") {
         BlockKind::Trait
+    } else if bare.starts_with("enum ") {
+        BlockKind::Enum
+    } else if bare == "imports" {
+        BlockKind::Imports
+    } else if is_function_decl_line(bare) {
+        BlockKind::Function
+    } else if is_match_head(line) {
+        BlockKind::Match
+    } else if line.starts_with("case ") {
+        BlockKind::Case
     } else {
         BlockKind::Other
     }
@@ -260,6 +305,13 @@ fn declaration_line_without_modifiers(mut line: &str) -> &str {
 ///
 /// Legacy `func name(...)` is still recognized so `ori fmt` can indent
 /// unmigrated buffers; prefer `ori migrate-syntax` then re-format.
+fn is_match_head(line: &str) -> bool {
+    line == "match"
+        || line.starts_with("match ")
+        || line.starts_with("return match ")
+        || line.contains("= match ")
+}
+
 fn is_function_decl_line(line: &str) -> bool {
     // `name(params) -> T => expr` is a single-line body — no indent increase.
     if line.contains("=>") {
@@ -307,6 +359,28 @@ mod tests {
         let once = format_source_text(src);
         let twice = format_source_text(&once);
         assert_eq!(once, twice);
+    }
+
+    #[test]
+    fn fmt_indents_imports_and_does_not_treat_calls_as_declarations() {
+        let src = "module app.main\n\nimports\nori.io = io\nend\n\nfoo()\nconst x: int = 1\nio.println(string(x))\nend\n\nmain()\nfoo()\nend\n";
+        let out = format_source_text(src);
+        assert_eq!(
+            out,
+            "module app.main\n\nimports\n    ori.io = io\nend\n\nfoo()\n    const x: int = 1\n    io.println(string(x))\nend\n\nmain()\n    foo()\nend\n"
+        );
+        assert_eq!(format_source_text(&out), out);
+    }
+
+    #[test]
+    fn fmt_keeps_enum_variants_flat_and_indents_multiline_lists() {
+        let src = "module app.main\nenum Event\nStarted(label: string)\nStopped\nend\nmain()\nconst xs: list[int] = [\n1,\n2,\n]\nend\n";
+        let out = format_source_text(src);
+        assert_eq!(
+            out,
+            "module app.main\nenum Event\n    Started(label: string)\n    Stopped\nend\nmain()\n    const xs: list[int] = [\n        1,\n        2,\n    ]\nend\n"
+        );
+        assert_eq!(format_source_text(&out), out);
     }
 
     #[test]

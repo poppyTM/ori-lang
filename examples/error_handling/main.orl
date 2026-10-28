@@ -11,10 +11,10 @@ end
 
 calculate(numerator: int, denominator: int) -> result[int, string]
     io.print(f"Calculating {numerator} / {denominator}...")
-    
+
     -- Using try for early return on error
     const val: int = try divide(numerator, denominator)
-    
+
     -- If we get here, the division succeeded
     return ok(val * 2)
 end
@@ -30,7 +30,7 @@ main()
         case err(msg):
             io.print(f"Error occurred: {msg}")
     end
-    
+
     io.print("")
 
     -- Test case 2: Failure

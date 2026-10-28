@@ -12,6 +12,38 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`deque`, `queue`, and `stack` preserve optional scalar payloads.** Their
+  runtime helpers return `optional[i64]`; codegen now re-encodes that wrapper as
+  `optional[T]` for `float32`, `u32`, `i8`/`i16`, and `bool` instead of handing
+  back an incompatible layout. `front`, `back`, `peek`, `pop`, and `dequeue`
+  now work for those element types on AOT and JIT. Managed payloads keep their
+  existing pointer path. Regression covers all three collections.
+
+- **Formatter no longer treats calls as declarations or unindents `imports`.**
+  A call-shaped statement inside a function body no longer opens a fake block,
+  `imports` entries keep their indentation, first `case` arms indent under
+  `match`, and multiline `{...}`/`[...]` literals indent their contents. The
+  official examples were reformatted with the corrected formatter; the formatter
+  regression suite covers imports, calls, matches, enums, and lists.
+
+- **Buffers, slices, and lists preserve scalar element types narrower than 64
+  bits.** `buffer[u32]`, `buffer[float32]`, `buffer[float64]`, and
+  `buffer[bool]` are now encoded into and decoded from the runtime's 64-bit
+  storage cells; `slice.get` and `list[float32]`/`list[float64]` use the same
+  conversion. Buffer indexing (`buf[i]` and `buf[i] = v`) now emits the
+  bounds-checked runtime access instead of failing with a missing-codegen
+  string. `buffer.get`/`buffer.as_slice` also carry a concrete HIR return type,
+  so interpolation and other inferred contexts no longer see `Infer`.
+  Regressions cover JIT and AOT, scalar widths, index read/write, and slices.
+
+- **Native compilation accepts nested relative source paths.** `ori compile
+  src/main.orl`, `ori build`, and `ori compile --lib` no longer stop at
+  `incremental.input_scan_failed: cannot scan ''`. The incremental project-root
+  search canonicalizes its starting directory before walking ancestors, so a
+  source under a project subdirectory resolves to the project root instead of
+  an empty path. Regression covers `ori compile src/main.orl` from the project
+  root.
+
 - **Aggressive leaf inlining can materialize scalar argument temporaries.**
   Direct same-module calls used as the complete value of `Let`, `Return`, or
   `Expr` can bind every numeric/bool argument once in source order, including
@@ -1488,6 +1520,236 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with the historical web experiments.
 - Freeze policy: the current language/ABI policy is
   [`docs/planning/freeze-and-abi-gates.md`](docs/planning/freeze-and-abi-gates.md).
+- Phase B/C/D, middleware, ori-sqlite symlink README.
+- Windows installer flow in `docs/install.md` / `install.pt-BR.md` and
+  `tools/windows/README.md`.
+- Root README / README.pt-BR Quick start: end-user Windows one-liner + Linux
+  package; website getting-started (EN/pt) updated for 0.3.5 Windows package.
+
+---
+
+## [0.3.8] — 2026-08-18
+
+Tagged release baseline. The final tag commit is the C-backend struct-emission
+and stdlib buffer-alias fix; the pre-tag work is recorded in
+`git log v0.3.7..v0.3.8`. This entry is reconstructed because the section was
+absent from `main` after the tag; it does not assert a new language surface.
+
+## [0.3.7] — 2026-07-19
+
+Patch release da janela FREEZE-1: `ori update` (self-update do toolchain),
+correção do bug silencioso dos guards de `match` (JIT, AOT e backend C),
+destrava do CI `native-route`, e spec/tour sincronizados com a implementação.
+Sem mudança de superfície da linguagem.
+
+### Adicionado
+- **`ori update` — self-update do toolchain (LANG-CLI-1).** Instalações via
+  pacote (tar.gz/zip) se atualizam sozinhas: `ori update --check` informa se
+  há release novo; `ori update` baixa o pacote da plataforma, verifica o
+  sha256 do manifest do release (divergência aborta antes de tocar em
+  qualquer arquivo), extrai com o `tar` do sistema e faz swap in-place com
+  staging + rollback no mesmo filesystem. Recusa instalações do gerenciador
+  do sistema (`.deb`) e builds de desenvolvimento. Testes: 5 unit + E2E
+  hermético contra servidor HTTP local (`tests/self_update.rs`). Docs:
+  seção "Updating" em `docs/install.md`/`install.pt-BR.md`.
+
+### Corrigido
+- **Guards de `match` eram silenciosamente ignorados.** `case padrão if
+  condição:` parseava e passava no type check, mas o lowering AST→HIR
+  descartava o guard — o primeiro braço com binding capturava qualquer
+  valor em tempo de execução, nos três caminhos (JIT, AOT e backend C),
+  ao contrário do que a Spec 06 §match promete. O guard agora é avaliado
+  com os bindings do padrão em escopo; quando falso, a execução cai para
+  o teste do braço seguinte (liberando apenas os retains dos bindings do
+  braço rejeitado — o scrutinee segue vivo para os próximos testes).
+  Regressão coberta nos três caminhos (`ori_spec`, `jit_run`, emissão C).
+- **CI: fallback de build do runtime nativo rodava fora do workspace.** Sem
+  o `runtime/<target>/libori_runtime.a` staged (caso do CI), o driver
+  tentava `cargo build -p ori-runtime --lib` na raiz do repositório — que
+  não tem `Cargo.toml` (o workspace fica em `compiler/`) — e todo teste
+  que executa binário nativo falhava com `native.runtime_missing`. O
+  fallback (e a resolução de `target/`) agora usa a raiz do workspace
+  cargo; a busca do runtime staged continua na raiz do repo. Isso
+  destrava o workflow `native-route`, vermelho desde a separação do
+  runtime staged.
+
+### Documentação
+- **Spec 05 §`is` reescrito para o comportamento real:** teste de tipo com
+  resultado `bool` (`any[Trait]` em runtime via vtable; LHS concreto
+  estático), **sem** narrowing e **sem** operandos enum — variantes se
+  discriminam com `match`/`case`. O texto antigo prometia narrowing e
+  enums, nenhum dos dois implementado.
+- **Tour (EN/PT) ganhou três recursos já implementados e invisíveis:**
+  guards de `match` com `case else`, binding condicional
+  `if some(x) = expr`, e a update expression `base with { … } end`.
+
+## [0.3.6] — 2026-07-19
+
+Patch release da janela FREEZE-1 (correções de memória/codegen, sem mudança
+de superfície da linguagem): campanha ARC do estudo Nim (LANG-MEM-0…9),
+DCE de closures, shadowing de builtins e ABI de argumentos sub-32-bit.
+
+### Mudado
+- **ARC: elisão de RC no return (LANG-MEM-4, ação 1).** `return x` de um
+  local managed transfere o +1 do binding ao caller — o par
+  `retain`(retorno) + `release`(cleanup do frame) não é mais emitido.
+  Builders no padrão `const xs = ...; return xs` ficam com zero operações
+  de RC.
+- **DX: `ORI_DUMP_ARC` (LANG-MEM-7).** Com `ORI_DUMP_ARC=1` (ou caminho de
+  arquivo), o compile imprime por função as operações ARC inseridas
+  (contagens + sequência) — análogo do `--expandArc` do Nim, para medir
+  elisões e auditar inserções.
+- **ARC: collector de ciclos incremental (LANG-MEM-3).** O passe
+  cooperativo deixou de escanear o heap inteiro: `ori_arc_release` registra
+  candidatos a raiz de ciclo (decremento para >0 em objeto com edges de
+  saída) e o passe roda trial deletion apenas no subgrafo desses suspeitos
+  — O(subgrafo), não O(alocações vivas). O threshold cooperativo (256)
+  agora adapta pela eficácia do passe (encolhe ×2/3 quando eficaz, cresce
+  ×1,5 quando não; bounds 64–65 536; `ORI_COOPERATIVE_COLLECT_THRESHOLD`
+  pina o valor). `ori.test.collect_cycles`/`assert_no_leaks` e o símbolo
+  `ori_arc_collect_cycles` mantêm o full scan. Spec 10 atualizado; nota:
+  [`docs/planning/historico/nim-study-2026-07-17-c3.md`](docs/planning/historico/nim-study-2026-07-17-c3.md).
+
+### Corrigido
+- **ARC: args owned nas coleções restantes + arestas de graph canônicas.**
+  Os emissores especiais de `hash_table`/`graph`/`heap`/`tree`/
+  `linked_list.find` e as listas-fonte de `maps.from_entries`/
+  `sets.from_list`/`heap.from_list` não liberavam chaves/valores
+  temporários owned (6–12 alocações vazadas por punhado de operações com
+  strings frescas). Todos seguem agora a regra uniforme "call → release do
+  temp owned". O fix expôs um bug real no runtime do graph: as arestas
+  guardavam o ponteiro cru do argumento — com nós deduplicados por
+  conteúdo, a aresta podia referenciar um temporário liberado;
+  `graph_add_node_raw` agora retorna o nó canônico armazenado e as
+  arestas o utilizam. Regressão:
+  `memory_arc::compile_runs_native_collections_owned_args_no_leak`.
+- **Otimizador: capturas de closure e contratos de campo agora contam como
+  uso/efeito no DCE.** O passe de dead-code (LANG-PERF-2-1) removia
+  `const` capturados apenas por closures (o corpo vive numa função
+  liftada) — toda closure com captura falhava no codegen nativo com
+  `closure capture X is not available`, inclusive across await — e
+  removia literais de struct com contrato de campo violado (o trap de
+  contrato sumia). Capturas agora são usos; literais de tipos com
+  contrato têm efeito. Isso zerou os últimos 9 testes vermelhos do repo
+  (8 em `multifile_imports` + 1 async); 4 deles tinham expectativas
+  calibradas no comportamento bugado e foram atualizados (showcase com a
+  linha `Displayable`, catálogo real de `examples/`, e os 2 de build com
+  bindings realmente usados).
+- **Resolução de nomes: binding local agora sombreia builtin sem prefixo
+  (LANG-FRONT-1).** `const len: int = lists.len(xs); return len` falhava
+  no codegen nativo com `undefined variable ori_len` — o identificador de
+  segmento único era resolvido para o símbolo do builtin (`len` → `ori_len`)
+  antes de consultar os bindings locais. Locais têm precedência agora;
+  chamar o builtin continua funcionando no mesmo escopo. Regressão:
+  `ori_spec::compile_runs_local_binding_shadows_bare_builtin`.
+- **ARC: wrappers `result`/`optional` do runtime nativo eram invisíveis ao
+  ARC (LANG-MEM-9).** `new_result*`/`new_optional_ptr` usavam `malloc` cru:
+  releases do codegen eram no-ops e toda chamada de `ori.fs`/`ori.process`/
+  net vazava o payload (12 alocações a cada 10 `fs.read_text_or`). Agora os
+  wrappers passam por `ori_alloc` e possuem o payload via edge (dono único
+  da cascata). Junto, o `try`/`?` foi corrigido: abandonava o wrapper owned
+  no caminho ok e não consumia o +1 no caminho err (32 leaks a cada 10
+  `try`); o payload extraído agora é sempre owned. Regressão:
+  `memory_arc.rs` (`fs_read_text_or_loop`, `try_unwrap_loop`).
+- **ARC: scrutinee owned de `match`/`if some` era vazado.** Um scrutinee
+  managed fresco (ex. `match mk(i)` direto, sem binding) nunca era
+  liberado — 1-2 alocações vazadas por execução do match; o mesmo em
+  `if some(x) = mk(i)`. Agora os payloads extraídos ganham +1 próprio
+  (registrados para cleanup por arm) e o wrapper é liberado nos dois
+  caminhos. `none` também entrou na lista de expressões owned (o wrapper
+  optional de `return none` ficava sem dono). Regressão: `memory_arc.rs`
+  (`match_owned_*`, `if_some_owned_*`).
+- **Codegen: crash do Cranelift com nomes de binding repetidos em match
+  aninhado.** Reusar o nome de payload (ex. `value`) em matches aninhados
+  de tipos nativos diferentes (float × string) derrubava o compilador com
+  panic interno (`declared type of variable varN doesn't match type of
+  value vNN`): a `Variable` era reusada de qualquer escopo sem checar o
+  tipo. Agora só é reusada com tipo idêntico; caso contrário há shadowing
+  léxico correto. Afetava `match`, `let`, `using`, `if some`/`while some`.
+  Regressão: `memory_arc.rs` (`nested_match_same_binding_name_*`).
+  Verificação completa dos 4 bugs reportados pelo projeto native-ori-ide:
+  [`docs/planning/historico/bugcheck-native-ori-ide-2026-07-18.md`](docs/planning/historico/bugcheck-native-ori-ide-2026-07-18.md).
+- **ABI nativa: zero-extension de argumentos de 8/16 bits para símbolos
+  externos.** O Cranelift passava um `bool` (I8, ex. resultado de `sete`)
+  com lixo nos bits altos do registrador; o runtime Rust (LLVM assume
+  caller-extension SysV) lia o registrador largo e, p.ex.,
+  `io.println(string("a" == "b"))` imprimia `fals` (length de "true" com
+  conteúdo de "false"). Params < 32 bits nas declarações de runtime agora
+  carregam `uext`. Pré-existente; exposto pela mudança de layout do C3 —
+  o fix também fez 8 testes de `multifile_imports` marcados como
+  pré-quebrados voltarem a passar.
+  Regressão: `ori_spec::compile_runs_bool_from_string_eq_prints_correctly`.
+- **ARC: maps e sets (args owned + posse do resultado de `get`).**
+  `maps.set`/`sets.add` (e demais calls de map/set) vazavam o +1 de chaves/
+  valores temporários owned; `maps.get` retornava valor borrowed do map que
+  o codegen tratava como owned (o cleanup do binding roubava o +1 vazado —
+  bugs pareados; corrigir um lado só causaria use-after-free). Agora todos
+  os calls liberam args owned, `maps.get` faz retain do resultado managed e
+  `maps.try_get` devolve optional que possui o payload via edge própria
+  (como `try_remove` já fazia). Regressão: `memory_arc.rs`
+  (`map_managed_values`, `set_owned_elements`, `map_get_value_survives_map_free`,
+  `map_try_get_payload`).
+- **ARC: temporários de string (print / f-string).** `io.print` com
+  argumento fresco (concat, f-string, conversões) vazava o +1 do
+  temporário, e cada parte/intermediário de f-string vazava (um f-string
+  de 5 partes deixava 7 alocações vivas). Agora o branch de print libera
+  args owned após a chamada e a interpolação libera intermediários e
+  partes conforme consumidos (bindings borrowed preservados). Regressão:
+  `memory_arc.rs` (`print_string_temps`, `fstring_intermediates`). Nota:
+  [`docs/planning/historico/nim-study-2026-07-17-c2.md`](docs/planning/historico/nim-study-2026-07-17-c2.md).
+- **ARC: dono único da cascata (native backend).** Structs/enums/tuples
+  liberavam campos managed **duas vezes** no free do dono (dtor gerado
+  `__dtor_*` + edge ARC registrada): um filho compartilhado com um binding
+  vivo era liberado cedo demais (use-after-free), e stores de elementos que
+  não liberavam o +1 do temporário owned vazavam — **literais de lista
+  aninhada e `lists.push` vazavam em programas reais**. Agora as edges
+  registradas são o único dono (regra uniforme: store → edge → release do
+  temp owned); os hooks `__dtor_*` foram removidos. ADR:
+  [`docs/planning/adr-arc-single-cascade-owner.md`](docs/planning/adr-arc-single-cascade-owner.md);
+  Spec 10 §"Cascade ownership"; regressão: `memory_arc.rs`
+  (`shared_child_*`, `nested_list_*`, `list_index_assign_*`,
+  `field_assign_owned_*`).
+
+### Notas
+- **Web stack feature freeze v1** documented in
+  [`packages/FREEZE-WEB.md`](packages/FREEZE-WEB.md) and
+  [`packages/README.md`](packages/README.md). Ready for polish + official
+  language release packaging (runtime symbols for crypto/TOTP/net timeouts).
+
+### Adicionado
+- **`ori compile --lib` (cdylib embed, P1):** shared library output with C ABI
+  exports. Annotate free `public` functions with `@c_export` /
+  `@c_export("name")` (`int`/`float`/`bool`/void). Runtime boot:
+  `ori_rt_init` / `ori_rt_shutdown`; module globals via `__ori_module_init`.
+  Links against staged `libori_runtime.so` (Linux). Plan:
+  [`docs/planning/PLANO-CDYLIB-EMBED.md`](docs/planning/PLANO-CDYLIB-EMBED.md).
+  Smoke: `tools/qa/embed_smoke.sh`, example `examples/embed/`.
+- **Web stack (packages):** templates (S8 trim), `ori-web` (A/B/C + SEC8 +
+  nested JSON + middleware + upload + keep-alive + B7 + custom sessions),
+  `ori-web-app` generators, `ori-web-auth` (TOTP), `ori-web-session-sqlite`,
+  demos (hello, notes, API, auth+2FA, upload, `blog_app`).
+- **Runtime/stdlib for web:** `ori.crypto` argon2id + TOTP; `ori.net`
+  `set_read_timeout_ms` / `set_write_timeout_ms`; package `native_libs`
+  forwarded from path deps.
+- **QA:** `tools/qa/web_sec8.sh`, `web_auth_smoke.sh`,
+  `web_session_sqlite_smoke.sh` (daily_full S6b–S6d).
+- **Windows install + PATH:** `tools/windows/Install-Ori.ps1` /
+  `Uninstall-Ori.ps1` (+ `install.cmd` / `uninstall.cmd`). Copies the full
+  package to `%LOCALAPPDATA%\Programs\Ori` (or Program Files with `-System`)
+  and permanently updates User/Machine `PATH`. Bundled into Windows release
+  zips via `smoke_native_release.ps1`. Developer helper
+  `tools/update_global.ps1` now packages then installs.
+- **Windows Scoop-style bootstrap:** `tools/windows/get.ps1` for
+  `irm …/get.ps1 | iex` (env: `ORI_VERSION`, `ORI_FORCE`, `ORI_SYSTEM`, …).
+- **Editor extension release packages:** `tools/package_editor_extensions.sh`
+  builds `ori-vscode-orl-<ver>.vsix` and `ori-zed-<ver>.zip` for GitHub
+  Releases (VS Code/Cursor VSIX + Zed dev-extension zip with prebuilt wasm).
+- **CI Windows packaging:** PowerShell scripts pass `--manifest-path` *after*
+  the cargo subcommand (required by Cargo 1.95+), unblocking the MSVC zip.
+
+### Documentação
+- Stack index + packaging note: `packages/README.md`.
+- Freeze policy: `packages/FREEZE-WEB.md`.
 - Phase B/C/D, middleware, ori-sqlite symlink README.
 - Windows installer flow in `docs/install.md` / `install.pt-BR.md` and
   `tools/windows/README.md`.
