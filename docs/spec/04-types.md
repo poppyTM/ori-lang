@@ -250,17 +250,27 @@ is_missing(value: handle[int]) -> bool
 end
 ```
 
-The constructor and probe do not establish pointee lifetime or thread affinity.
-Ori still does not provide a safe dereference operation. A non-null handle must
-come from a host/`extern c` API whose lifetime contract remains in force.
+The safe contract is deliberately narrow:
 
-`==` and `!=` compare handle pointer identity only; they never dereference or
-retain the pointee. Do not store a handle beyond the lifetime guaranteed by its
-host API, or expose one in an aggregate return without a documented owner. The checker rejects `@c_export` aggregates containing a
-borrowed handle, including nested structs and enum payloads. The complete
-nullability, lifetime, equality, FFI, and cross-thread contract is tracked in
-`LANG-HANDLE-1`; this section describes the current implementation boundary
-rather than promising an ownership guarantee.
+- **No safe dereference.** Ori does not expose an operation that reads through
+  `handle[T]`. The only safe operations are construction of the null sentinel,
+  `is_null`, and identity comparison.
+- **Host-owned lifetime.** A non-null handle must come from a host/`extern c`
+  API whose lifetime contract remains in force. The language never retains or
+  releases the pointee, so it cannot extend that lifetime. Do not store a handle
+  beyond the host guarantee.
+- **No thread transfer.** A handle is not `Transferable`; capturing it in
+  `task.spawn` or sending it through a channel is rejected.
+- **No export escape.** `@c_export` rejects a borrowed handle both directly and
+  inside an aggregate, including nested structs, enums, optionals, results,
+  tuples, and arrays.
+- **Identity equality.** `==` and `!=` compare the pointer/sentinel address
+  only; they never dereference or retain the pointee.
+
+This is the complete safe boundary for the current language: because there is
+no safe dereference, no lifetime can be violated through a safe Ori operation.
+The contract is closed; it is not an ownership guarantee, and adding a safe
+read operation would require a new lifetime design.
 
 ## Fixed-Size Arrays (`array[T, N]` or `array[T, size: N]`)
 

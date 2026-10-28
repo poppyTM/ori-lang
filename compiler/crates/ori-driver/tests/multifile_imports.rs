@@ -12763,6 +12763,60 @@ end
 }
 
 #[test]
+fn check_rejects_c_export_direct_borrowed_handle() {
+    let dir = TestDir::new("c_export_direct_handle");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.handle = handles
+
+@c_export
+public take(value: handle[int]) -> bool
+    return handles.is_null(value)
+end
+"#,
+    );
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(out.has_errors, "a borrowed handle must not be exported");
+    assert!(
+        diagnostic_codes(&out).contains(&"attr.c_export_bad_type"),
+        "{:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn compile_runs_handle_identity_native() {
+    let dir = TestDir::new("handle_identity_native");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.handle = handles
+import ori.io = io
+
+main()
+    const left: handle[int] = handles.null()
+    const right: handle[int] = handles.null()
+    if left == right
+        io.print("eq")
+    else
+        io.print("ne")
+    end
+end
+"#,
+    );
+
+    let exe = exe_path(&dir, "handle_identity");
+    let out = run_compile(&dir.path("main.orl"), &exe).unwrap();
+    assert!(!out.has_errors, "{:?}", out.diagnostics);
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "eq");
+}
+
+#[test]
 fn check_handle_null_probe_and_identity_accept_borrowed_ffi_handle() {
     let dir = TestDir::new("handle_is_null");
     dir.write(

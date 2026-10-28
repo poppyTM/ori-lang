@@ -937,6 +937,67 @@ end
 }
 
 #[test]
+fn check_rejects_handle_capture_in_task() {
+    let dir = TestDir::new("handle_capture_task");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.task = task
+
+extern c
+    raw_handle() -> handle[int]
+end
+
+use_handle(h: handle[int]) -> int
+    return 0
+end
+
+main()
+    const h: handle[int] = raw_handle()
+    const job: task.Job[int] = task.spawn(() => use_handle(h))
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(out.has_errors, "borrowed handles must not cross tasks");
+    let codes = diagnostic_codes(&out);
+    assert!(
+        codes.contains(&"async.capture_not_transferable")
+            || codes.contains(&"concurrency.not_transferable"),
+        "{codes:?}"
+    );
+}
+
+#[test]
+fn check_rejects_handle_channel_send() {
+    let dir = TestDir::new("handle_channel_send");
+    dir.write(
+        "main.orl",
+        r#"module app.main
+
+import ori.channel = channel
+
+extern c
+    raw_handle() -> handle[int]
+end
+
+main()
+    const ch: channel.Channel[handle[int]] = channel.create()
+    const h: handle[int] = raw_handle()
+    const sent: result[void, channel.SendError] = channel.send(ch, h)
+end
+"#,
+    );
+
+    let out = run_check(&dir.path("main.orl")).unwrap();
+    assert!(out.has_errors, "borrowed handles must not cross channels");
+    let codes = diagnostic_codes(&out);
+    assert!(codes.contains(&"concurrency.not_transferable"), "{codes:?}");
+}
+
+#[test]
 fn check_allows_using_inside_async_func() {
     let dir = TestDir::new("async_using_allowed");
     dir.write(
