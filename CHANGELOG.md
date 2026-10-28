@@ -12,6 +12,11 @@ e o projeto adere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Security: refresh TLS and async runtime dependencies.** Updated `rustls`
+  to 0.23.46, `rustls-webpki` to 0.103.16, `webpki-roots` to 1.0.10, and
+  `tokio` to 1.54.1, clearing the RUSTSEC-2026-0346/0347/0348/0349/0381/0382/0386
+  advisories reported by `cargo audit`.
+
 - **`deque`, `queue`, and `stack` preserve optional scalar payloads.** Their
   runtime helpers return `optional[i64]`; codegen now re-encodes that wrapper as
   `optional[T]` for `float32`, `u32`, `i8`/`i16`, and `bool` instead of handing
