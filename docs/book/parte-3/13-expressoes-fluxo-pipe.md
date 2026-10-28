@@ -252,7 +252,7 @@ const evens = numbers.filter((n: int) => n % 2 == 0)
 
 ## O Encadeamento com Pipe `|>`
 
-O operador de pipe `|>` pega o resultado do que está à sua esquerda e o injeta como o **primeiro argumento** da próxima função à sua direita. Ele substitui chamadas matemáticas aninhadas que são difíceis de ler.
+O operador de pipe `|>` pega o resultado do que está à sua esquerda e o injeta como o **único argumento** da função à sua direita. Ele substitui chamadas matemáticas aninhadas que são difíceis de ler.
 
 ```ori
 -- Em vez de escrever algo invertido de ler como: to_label(add_ten(double(5)))
@@ -266,15 +266,18 @@ const label = 5
 
 Isso facilita brutalmente a leitura, pois lemos as transformações na exata ordem em que vão acontecer.
 
-> **Pegadinha comum:** quando a função do lado direito **não** recebe
-> argumento extra nenhum (só o valor que vem do pipe), escreva o nome dela
-> **sem parênteses**: `raw |> str.trim`, não `raw |> str.trim()`. Parênteses
-> vazios chamam a função primeiro, com zero argumentos — o que quase sempre
-> dá erro de tipo. Parênteses só aparecem quando há argumentos *extras*
-> além do valor do pipe: `raw |> str.center(10)` (equivale a `str.center(raw, 10)`).
+> **Pegadinha comum:** o lado direito do pipe é uma **função** (nome ou caminho
+> de módulo), escrita **sem parênteses**: `raw |> str.trim`, não
+> `raw |> str.trim()`. Parênteses vazios chamam a função primeiro, com zero
+> argumentos — o que quase sempre dá erro de tipo.
+>
+> Em 0.3.8 o pipe passa **um único** argumento. `raw |> str.center(10)` **não**
+> funciona: o checker tenta avaliar `str.center(10)` como chamada normal e
+> reporta `type.arg_count_mismatch`. Funções de dois ou mais argumentos são
+> chamadas diretamente: `str.center(raw, 10)`.
 
 ## O que memorizar
 *   Sempre use `elif` e não `else if`.
 *   Para repetir ações, prefira as ferramentas específicas como `repeat 5 times` e `for item, index in items`.
 *   O `match` precisa cobrir tudo sem exceção (use `case else:` como coringa seguro).
-*   O pipe `|>` empurra o valor sempre para o primeiro parâmetro da próxima etapa.
+*   O pipe `|>` empurra o valor como **único** argumento da função da direita (sem parênteses); para dois ou mais argumentos, chame a função diretamente.

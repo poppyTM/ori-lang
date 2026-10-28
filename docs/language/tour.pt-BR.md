@@ -294,10 +294,10 @@ const pequeno: Buffer[size: 8]  = Buffer { used: 0 }
 const grande: Buffer[size: 16] = Buffer { used: 0 }   -- outro tipo
 ```
 
-Dois limites que valem saber: um **trait genérico** pode ser declarado mas não
-aplicado, e tipos de ordem superior (um parâmetro que representa `list` ou
-`optional` em si) estão deliberadamente fora de escopo. Veja
-[spec/11-generics.md](../spec/11-generics.md).
+Um **trait genérico** pode ser declarado **e aplicado** com argumentos
+posicionais (`apply IntBox use Container[int]`). Tipos de ordem superior (um
+parâmetro que representa `list` ou `optional` em si) estão deliberadamente fora
+de escopo. Veja [spec/11-generics.md](../spec/11-generics.md).
 
 ---
 

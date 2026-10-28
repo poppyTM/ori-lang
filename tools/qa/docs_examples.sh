@@ -20,6 +20,9 @@ fi
 echo "== canonical example checks =="
 ORI_BIN="$ori_bin" "$repo/tools/qa/examples_smoke.sh"
 
+echo "== self-contained documentation code blocks =="
+ORI_BIN="$ori_bin" python3 "$repo/tools/qa/docs_codeblocks.py"
+
 if command -v "$ori_bin" >/dev/null 2>&1 || [ -x "$ori_bin" ]; then
     echo "== inline/sidecar documentation check =="
     (

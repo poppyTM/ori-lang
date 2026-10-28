@@ -46,6 +46,7 @@ const CHAPTERS = [
   "parte-4/20-stdlib-indice.md",
   "parte-4/21-diagnostics.md",
   "parte-4/22-estabilidade-abi-limites.md",
+  "parte-4/23-referencia-completa.md",
   "apendices/A-cheat-sheet.md",
   "apendices/B-mapa-repositorio.md",
   "apendices/C-exercicios.md",

@@ -49,7 +49,7 @@ Legend: **Y** = first-class / suite exists or required · **P** = partial / subs
 | 39 | VM | **N** | AOT-first |
 | 40 | Compiler Crash | **Y** | security_robustness + fuzz lite |
 | 41 | Fuzzing | **P** | expand `tools/qa`; start small |
-| 42 | Differential Testing | **P** | native vs C subset; JIT vs AOT |
+| 42 | Differential Testing | **Y** | AOT vs JIT (`differential_testing.rs`, `jit_run.rs`); C source emission removed |
 | 43 | Snapshot | **P** | diagnostics UPDATE_EXPECT |
 | 44 | Golden | **Y** | diagnostic / output goldens |
 | 45 | Benchmark | **Y** | `tools/microbench_lang_perf.sh` |
@@ -65,7 +65,7 @@ Legend: **Y** = first-class / suite exists or required · **P** = partial / subs
 | 55 | Determinismo | **Y** | same input → same diags/binary behavior |
 | 56 | Compatibilidade | **Y** | FREEZE-1 / 0.3.x / migrate-syntax |
 | 57 | Serialização | **P** | package/manifest; not full AST dump product |
-| 58 | Incremental Compilation | **P** | LSP incremental; not full incr AOT product |
+| 58 | Incremental Compilation | **Y** | LSP incremental + native `.ori/incremental.json` / per-module object reuse (`ORI_DISABLE_INCREMENTAL=1` bypass) |
 | 59 | Linkagem | **Y** | native link strategies + smoke packages |
 | 60 | Importação de Módulos | **Y** | multifile_imports |
 | 61 | Segurança | **Y** | security_robustness |

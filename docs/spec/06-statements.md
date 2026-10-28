@@ -503,7 +503,8 @@ other forms (see later chapters / S3 block 4).
 
 ```ori
 using file: ori.fs.File = try ori.fs.open_read(path)
-const content: string = try ori.fs.read_all(file)
+const raw: bytes = try ori.fs.read(file, 256)
+const content: string = try ori.string.from_bytes(raw)
 return ok(content)
 ```
 
@@ -532,7 +533,7 @@ end
 
 ```ori
 check count >= 0
-check index < len(items), "index out of expected range"
+check index < ori.list.len(items), "index out of expected range"
 ```
 
 `check` asserts a condition that must hold as a programmer invariant.

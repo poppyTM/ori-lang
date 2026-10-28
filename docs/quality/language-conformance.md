@@ -35,14 +35,17 @@ negative:
 backends:
   native_aot: required
   jit: required
-  c_debug: required
 formatter: required
 lsp: required
 introduced: 0.3.0
 current: 0.3.8
 ```
 
-The future machine-readable registry may live under `docs/quality/conformance/` and generate a human-readable matrix.
+**Current status:** no machine-readable conformance registry exists yet. This
+document is policy and a proposed shape, not a claim of full
+specification-to-test traceability. Creating `docs/quality/conformance/` and a
+validator remains open work; until then, `ori_spec`, `multifile_imports`, and
+the diagnostic catalog are the executable evidence.
 
 ## Evidence types
 

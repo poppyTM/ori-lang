@@ -1,8 +1,8 @@
 # Ori current status
 
-> Canonical public version: **0.3.8**  
-> Language surface: **S3 / 0.4 ergonomics**  
-> Native ABI: **`ori-native-abi-1`**  
+> Canonical public version: **0.3.8**
+> Language surface: **S3 + post-S3 ergonomics (delivered in `0.3.8`)**
+> Native ABI: **`ori-native-abi-1`**
 > Maturity: **pre-1.0, active development**
 
 This document is the canonical human-readable status page. Historical release numbers must not be presented as the current project version.

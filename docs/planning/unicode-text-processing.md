@@ -1,7 +1,8 @@
 # Plano de implementação — texto Unicode
 
-> **Status:** paridade escalar concluída; biblioteca aprovada por fases.  
-> **Baseline:** `string` contém UTF-8 válido; native e C/debug indexam por
+> **Status:** paridade escalar concluída na rota nativa; C source emission foi
+> removido pela ADR-0005.
+> **Baseline:** `string` contém UTF-8 válido; native AOT/JIT indexam por
 > valores escalares. Graphemes, normalização e regex não fazem parte da stdlib.
 
 ## 1. Contrato de texto
@@ -20,10 +21,10 @@ continuam em `bytes`.
 
 ## 2. Estado real
 
-- native e C/debug contam, fatiam, indexam, buscam e iteram por scalar value;
+- native AOT/JIT contam, fatiam, indexam, buscam e iteram por scalar value;
 - boundaries de entrada usados por `io.read_line` rejeitam UTF-8 inválido;
-- `to_upper`, `to_lower` e helpers têm paridade limitada no C/debug;
-- native AOT/JIT e C/debug usam case folding Unicode full, non-Turkic com 100% de paridade (tabelas em `ori-codegen/c_casefold.rs` sincronizadas com `unicode-casefold` em `ori-runtime`);
+- `to_upper`, `to_lower` e helpers são implementados na rota nativa;
+- native AOT/JIT usam case folding Unicode full, non-Turkic (`unicode-casefold` em `ori-runtime`);
 - não há grapheme segmentation ou normalization;
 - helpers como `is_digits` e `swap_case` são explicitamente ASCII;
 - não há regex na stdlib.
@@ -32,11 +33,11 @@ continuam em `bytes`.
 
 | ID | Entrega | Critério observável |
 |---|---|---|
-| **TEXT-UNICODE-1.0** | fechar BUG-UTF8-LEN | **done 2026-08-09:** global/method len, slice, index, get, chars, direct for e input validation concordam entre native e C/debug |
+| **TEXT-UNICODE-1.0** | fechar BUG-UTF8-LEN | **done 2026-08-09:** global/method len, slice, index, get, chars, direct for e input validation concordam na rota nativa |
 | **TEXT-UNICODE-1.1** | nomenclatura e APIs escalares | docs não usam “char” de forma ambígua |
 | **TEXT-UNICODE-1.2** | grapheme views | cursor e truncamento nunca dividem cluster |
 | **TEXT-UNICODE-1.3** | normalização | NFC/NFD/NFKC/NFKD com vetores oficiais |
-| **TEXT-UNICODE-1.4** | case folding e categorias | **done 2026-09-02:** case folding Unicode full non-Turkic completo com paridade exata entre native Cranelift e C/debug, verificado com suite de vetores de conformidade (`tests/unicode_case_fold_conformance.json`) |
+| **TEXT-UNICODE-1.4** | case folding e categorias | **done 2026-09-02:** case folding Unicode full non-Turkic completo com cobertura nativa Cranelift AOT/JIT, verificada com suite de vetores de conformidade (`tests/unicode_case_fold_conformance.json`) |
 | **TEXT-UNICODE-1.5** | regex como package/stdlib avaliada | limites, Unicode e proteção contra abuso documentados |
 
 ## 4. Dependências e segurança
@@ -56,7 +57,7 @@ viva.
 - entradas vazias e limites no início/fim;
 - propriedades oficiais Unicode para normalização e segmentação;
 - round-trip `string ↔ bytes` somente com UTF-8 válido;
-- paridade AOT/JIT; C/debug apenas nas operações que promete;
+- paridade AOT/JIT na rota nativa (C source emission foi removido);
 - benchmarks de texto curto, logs, JSON e editor.
 
 ## 6. Fora de escopo

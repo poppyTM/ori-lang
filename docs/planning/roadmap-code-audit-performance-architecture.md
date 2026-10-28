@@ -227,7 +227,7 @@ that every open backlog row is complete.
 | Custom attributes | Unsupported namespaced attributes fail closed with `attr.unknown`; only built-in attributes have schemas | Implemented for the reject-unsupported contract; third-party schemas remain future work | `META-ATTR-1` |
 | Explicit `self` | Checker and trait spec require explicit `self`; one old function example was corrected | Implemented; documentation drift fixed | `AUD-HYGIENE-1` |
 | Host `extern` ABI | Parser, HIR, `ori-embed`, and ABI docs are connected | Implemented for ABI v1 scope | `EMBED-HOST-1` |
-| C backend parity | Native AOT/JIT is the reference; C is an intentional sync/debug subset | Intentional partial, not a language blocker | `BACK-C-1` |
+| C backend parity | Native AOT/JIT is the reference; C source emission was retired by ADR-0005 | Retired, not a language blocker | `BACK-C-1` |
 | Free-list/SSO/ARC sharding | Measurements show free-list regression; SSO is ABI-sensitive; sharding lacks data | Deferred until a benchmark proves need | P2 performance rows |
 | Self-hosting, macros, HKT, specialization | No implementation and no product need in the current surface | Deferred by language decision | M4 / rejected rows |
 

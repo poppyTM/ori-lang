@@ -3,7 +3,7 @@ baseline:
   language_surface: "0.3.0"
   local_inference: "0.3.1-option-B"
   workspace: "0.3.8-dev"
-  latest_release: "0.3.7"
+  latest_release: "0.3.8"
   abi: ori-native-abi-1
 
 features:
@@ -48,11 +48,11 @@ features:
     name: Inline arrays and slices
     status: partial
     implementation: [compiler/crates/ori-parser/src, compiler/crates/ori-codegen/src/native_backend.rs]
-    tests: [compiler/crates/ori-driver/tests/ori_spec.rs]
+    tests: [compiler/crates/ori-driver/tests/ori_spec.rs, compiler/crates/ori-driver/tests/dx_scripting.rs]
     user_docs: [docs/language/advanced.md]
     reference: [docs/spec/04-types.md, docs/spec/14-backend-support.md]
     examples: []
-    limitations: "Native arrays are scalar-only; backend parity is incomplete."
+    limitations: "Native arrays store scalar or inline-struct elements; managed elements are rejected by design. `buffer`/`slice` use one 64-bit runtime cell per element and encode narrower scalar types at the boundary."
 
   - id: language.alias-and-newtype
     name: Transparent aliases and nominal newtypes
@@ -108,7 +108,7 @@ features:
     user_docs: [docs/language/tour.md, docs/language/advanced.md]
     reference: [docs/spec/08-traits.md, docs/spec/11-generics.md]
     examples: [examples/native_showcase/main.orl]
-    limitations: "Generic traits and higher-kinded types remain restricted."
+    limitations: "Generic functions, structs, and traits are supported, including `use Trait[Arg]`. Higher-kinded type constructors remain out of scope by decision; const generics are a separate feature."
 
   - id: language.const-generics
     name: Named compile-time generic arguments
@@ -128,7 +128,7 @@ features:
     user_docs: [docs/language/tour.md, docs/language/advanced.md]
     reference: [docs/spec/08-traits.md]
     examples: [examples/native_showcase/main.orl]
-    limitations: "Associated items are implemented; higher-kinded trait constructors remain restricted."
+    limitations: "Associated type aliases, associated functions, default methods, and generic trait applications are implemented. Higher-kinded trait constructors remain out of scope by decision."
 
   - id: language.errors
     name: Optional/result propagation and diagnostics
@@ -217,7 +217,7 @@ features:
     user_docs: [README.md, README.pt-BR.md, docs/language/advanced.md, docs/language/advanced.pt-BR.md]
     reference: [docs/planning/roadmap-code-audit-performance-architecture.md]
     examples: [tools/bench]
-    limitations: "AUD-OPT-1/AUD-OPT-2 are closed by conservative effect classification and call-boundary-preserving inlining. Explicit HIR temporaries may broaden safe inlining later; SIMD remains a no-op scaffold."
+    limitations: "AUD-OPT-1/AUD-OPT-2 are closed by conservative effect classification and call-boundary-preserving inlining. Explicit HIR temporaries may broaden safe inlining later. There is no auto-vectorizer; explicit `simd[T, N]` lowers directly in codegen."
 
   - id: stdlib.core
     name: Standard library runtime and source modules
@@ -227,7 +227,7 @@ features:
     user_docs: [docs/guides/stdlib-reference.md, stdlib/README.md]
     reference: [docs/spec/12-stdlib.md, docs/spec/15-stdlib-maintenance.md]
     examples: [examples/collections_demo/main.orl, examples/http_get/main.orl]
-    limitations: "Module inventory and broad functionality exist. ARC multiplicity, managed-channel ownership, async network lifetime/cancellation, bounded channels, shared blocking async I/O workers, and managed native bytes with embedded NUL are covered by regressions. Typed operational errors, Unicode parity, reactor performance, and sanitizer/TSan coverage remain open."
+    limitations: "Module inventory and broad functionality exist. ARC multiplicity, managed-channel ownership, async network lifetime/cancellation, bounded channels, shared blocking async I/O workers, and managed native bytes with embedded NUL are covered by regressions. Typed errors exist for fs/net/json/process/crypto, and Unicode scalar/case-fold parity is covered; reactor performance and sanitizer/TSan coverage remain open."
 
   - id: tooling.cli
     name: Compiler, package, documentation, and migration CLI
@@ -247,7 +247,7 @@ features:
     user_docs: [docs/guides/debugging.md, extensions/README.md, extensions/vscode-orl/README.md, extensions/zed-ori/README.md]
     reference: [docs/spec/14-backend-support.md]
     examples: [examples/README.md]
-    limitations: "Zed has no automatic debugger wiring in its current extension API. LSP UTF-16 positions, resolver identity, snapshot-version publication, and semantic editor lint still need conformance evidence; canonical S3 completion/hover is the implemented baseline."
+    limitations: "Zed has no automatic debugger wiring in its current extension API. UTF-16 positions and incremental navigation have E2E coverage; resolver identity, snapshot-version publication, and semantic editor lint still need broader conformance evidence. Canonical S3 completion/hover is the implemented baseline."
 
   - id: tooling.quality-release
     name: Quality, security, package, and release gates
@@ -257,4 +257,4 @@ features:
     user_docs: [README.md, README.pt-BR.md]
     reference: [docs/planning/roadmap-code-audit-performance-architecture.md, docs/planning/BACKLOG.md]
     examples: []
-    limitations: "Required QA, package integrity/locks, and release reproducibility are implemented (AUD-QA-1, AUD-PKG-1/2, AUD-REL-1). Behavioral gates, fuzzing/sanitizers, and full-workspace formatting debt remain AUD-QA-2/3 and the scoped ratchet."
+    limitations: "Required QA, package integrity/locks, release reproducibility, and the scoped Rustfmt baseline are implemented (AUD-QA-1, AUD-PKG-1/2, AUD-REL-1). Behavioral coverage, coverage-guided fuzzing, and scheduled sanitizer/TSan execution remain AUD-QA-2/3."

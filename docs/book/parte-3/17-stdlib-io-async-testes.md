@@ -20,7 +20,8 @@ end
 process_file() -> result[string, string]
     -- O arquivo é aberto; abrir pode falhar, por isso o 'try'
     using file: fs.File = try fs.open_read("dados.txt")
-    const text: string = try fs.read_all(file)
+    const raw: bytes = try fs.read(file, 4096)
+    const text: string = try ori.string.from_bytes(raw)
     -- 'file' é fechado automaticamente aqui, no 'end' da FUNÇÃO,
     -- não num 'end' próprio do using
     return ok(text)
@@ -127,10 +128,10 @@ A stdlib da Ori vai muito além de I/O e testes — o [Cap. 20](../parte-4/20-st
   - `ori.args`: Captura o que foi digitado no terminal pelo usuário.
 - **Dados (`ori.json`):** Leitura e escrita nativa do formato JSON.
 - **Coleções extras (`ori.stack`, `ori.queue`, `ori.deque`, `ori.tree`, `ori.graph`, `ori.heap`, `ori.linked_list`, `ori.hash_table`):** estruturas de dados prontas além de `list`/`map`/`set`.
-- **Iteração preguiçosa (`ori.iter`):** filtros e mapeamentos que só calculam quando você pede o próximo valor.
+- **Iteração (`ori.iter`):** filtros e mapeamentos **eager** — devolvem uma nova lista imediatamente; para lazy de verdade use `lazy[T]` ou um tipo com `core.Iterable`.
 
 ## O que memorizar
-- `using recurso = ...` fecha arquivos e conexões sozinho; **não** tem `end` próprio — a limpeza acontece no `end` do bloco onde ele foi declarado (LIFO se houver vários).
+- `using recurso: Tipo = ...` fecha arquivos e conexões sozinho; **não** tem `end` próprio — a limpeza acontece no `end` do bloco onde ele foi declarado (LIFO se houver vários).
 - `async` e `await` evitam travamentos em operações demoradas (I/O, rede); a Ori não expõe threads do SO para o seu código.
 - Funções de teste começam com `@test`, podem ser síncronas ou `async`, e usam o módulo `ori.test` para asserções.
 - `ori test arquivo.orl` ou `ori test ori.proj` descobrem e executam seus testes.

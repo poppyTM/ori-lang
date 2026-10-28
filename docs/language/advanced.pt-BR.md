@@ -171,7 +171,7 @@ Garantias de análise de escape:
 ```ori
 import ori.buffer as buf
 
-var pixels: buffer[int] = buf.alloc[int](1920 * 1080)
+var pixels: buffer[int] = buf.new(1920 * 1080)
 buf.set(pixels, 0, 0xFF0000FF)
 ```
 

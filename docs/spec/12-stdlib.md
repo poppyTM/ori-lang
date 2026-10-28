@@ -235,9 +235,8 @@ string(value: float)         -- string: convert a float to text
 string(value: bool)          -- string: convert a boolean to text
 string(value: string)        -- string: return the same string value
 string(value: Displayable)   -- string: call display(self) for user types
-int(value)                   -- int: explicit numeric conversion where supported
-float(value)                 -- float: explicit numeric conversion where supported
-u8(value)                    -- u8: explicit narrowing conversion where supported
+int(value)                   -- int: convert an integer value to int
+float(value)                 -- float: convert an integer to float
 ```
 
 Collection and byte lengths are exposed through their modules or method-call
@@ -836,18 +835,24 @@ iter.reverse[T](values: list[T]) -> list[T]
 iter.reduce[T, R](values: list[T], initial: R, reducer: func(R, T) -> R) -> R
 iter.find[T](values: list[T], predicate: func(T) -> bool) -> optional[T]
 iter.flat_map[T, R](values: list[T], mapper: func(T) -> list[R]) -> list[R]
-iter.sort[T](values: list[T]) -> list[T] for T: Comparable
+iter.sort[T](values: list[T]) -> list[T]
 iter.sort_by[T](values: list[T], compare: func(T, T) -> int) -> list[T]
-iter.unique[T](values: list[T]) -> list[T] for T: Equatable
+iter.unique[T](values: list[T]) -> list[T]
 iter.zip[A, B](a: list[A], b: list[B]) -> list[tuple[A, B]]
 iter.partition[T](values: list[T], predicate: func(T) -> bool) -> tuple[list[T], list[T]]
 iter.group_by[T, K](values: list[T], key: func(T) -> K) -> map[K, list[T]]
-    for K: Hashable and K is Equatable
 iter.flatten[T](nested: list[list[T]]) -> list[T]
 ```
 
 All `iter.*` functions are **eager**: they return a new `list[T]` immediately.
 Lazy evaluation is explicit through `lazy[T]`, `lazy.once`, and `lazy.force`.
+
+`iter.sort` is native for `int` and `string` ordering; `iter.sort_by` takes an
+`int` comparator (negative/zero keeps `a` before `b`, positive places `a`
+after). `iter.unique` keeps the first occurrence and compares string contents by
+value. `iter.group_by` follows the `map` key rules (`int`, `string`, or a
+non-recursive `Hashable` + `Equatable` type); the native runtime covers `int`
+and `string` keys.
 
 Current implementation status:
 
@@ -895,10 +900,10 @@ math.clamp(value: int, min: int, max: int) -> int
 math.floor(x: float) -> int
 math.ceil(x: float) -> int
 math.round(x: float) -> int
-math.sqrt(x: float where x >= 0.0) -> float
+math.sqrt(x: float) -> float
 math.pow(base: float, exp: float) -> float
-math.log(x: float where x > 0.0) -> float
-math.log2(x: float where x > 0.0) -> float
+math.log(x: float) -> float
+math.log2(x: float) -> float
 math.sin(x: float) -> float
 math.cos(x: float) -> float
 math.tan(x: float) -> float
@@ -909,6 +914,9 @@ math.nan: float
 math.is_nan(x: float) -> bool
 math.is_infinite(x: float) -> bool
 ```
+
+`sqrt`, `log` and `log2` impose no domain contract in v1: passing a negative or
+zero value follows the host `libm` behavior (`NaN`/`-inf`), not a panic.
 
 Mixed integer/float calls are not implicitly widened. Use `float(value)` when a
 call should use the float overload.
@@ -1317,11 +1325,11 @@ import ori.json = json
 
 enum Value
     Null
-    Bool { value: bool }
-    Number { value: float }
-    String { value: string }
-    Array { items: list[Value] }
-    Object { fields: map[string, Value] }
+    Bool(value: bool)
+    Number(value: float)
+    String(value: string)
+    Array(items: list[Value])
+    Object(fields: map[string, Value])
 end
 
 json.parse(text: string) -> result[json.Value, string]

@@ -18,6 +18,10 @@ else
 fi
 cd "$comp"
 if ! rustc -Z help >/dev/null 2>&1; then
+  if [ "${ORI_REQUIRE_SANITIZERS:-0}" = "1" ]; then
+    echo "sanitizer_smoke: FAILED (ORI_REQUIRE_SANITIZERS=1 but the toolchain lacks -Zsanitizer; install nightly)" >&2
+    exit 2
+  fi
   echo "sanitizer_smoke: INCOMPLETE (toolchain lacks -Zsanitizer support; install nightly for sanitizer coverage)"
   exit 0
 fi

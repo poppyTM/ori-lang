@@ -4,7 +4,10 @@
 > **Parte:** IV
 
 ## TL;DR
-Uma referência completa e rápida de toda a sintaxe da linguagem Ori, no padrão S3. Perfeito para manter aberto ao lado enquanto você programa. Todo trecho aqui foi validado rodando o compilador de verdade.
+Uma referência completa e rápida de toda a sintaxe da linguagem Ori, no padrão S3. Perfeito para manter aberto ao lado enquanto você programa. Os exemplos completos foram validados rodando o compilador de verdade; os demais são fragmentos de corpo de função (o `module` aparece só quando o trecho é um arquivo inteiro) e assumem os imports usuais (`io`, `fs`, `str`).
+
+## Versão verificada
+Os trechos refletem a superfície aceita pelo compilador **0.3.8**. Onde a implementação ainda diverge do ideal (fatias abertas, pipe com argumentos, `@inline`), a limitação está anotada na seção correspondente e no [cap. 23](23-referencia-completa.md).
 
 ---
 
@@ -24,7 +27,7 @@ public import ori.net as net
 
 -- Múltiplos imports em bloco
 imports
-    ori.fmt = fmt
+    ori.format = fmt
     ori.fs = fs
 end
 ```
@@ -170,8 +173,8 @@ const user = User { name: "Bob", age: 30 }
 -- Literal de struct anônima (quando o tipo já é esperado pelo contexto)
 const p: Point = { x: 0, y: 0 }
 
--- Atualização de struct (copia mudando alguns campos; NÃO tem 'end' de bloco extra)
-const user2 = user with { age: 31 } end
+-- Atualização de struct (copia mudando alguns campos; fecha com `end`)
+const user2: User = user with { age: 31 } end
 
 -- Destructuring: liga vários campos de uma vez (só struct, não tupla)
 const User { name, age } = get_user()
@@ -217,7 +220,8 @@ apply User: Printable
     end
 end
 
-apply User: Printable, Comparable
+-- (com `import ori.core = core` no topo do arquivo)
+apply User: Printable, core.Comparable
     print(self)
         io.println(self.name)
     end
@@ -237,9 +241,9 @@ Ori usa `optional` para ausência de valor e `result` para erros esperados.
 ```ori
 -- Criando valores
 const v1 = some(10)
-const v2 = none
+const v2: optional[int] = none
 const r1 = ok(20)
-const r2 = err("Falhou")
+const r2: result[int, string] = err("Falhou")
 
 -- Binding condicional: mesma forma para optional e result
 if some(val) = v1
@@ -288,15 +292,16 @@ const interval = 1..10
 -- Closure inline
 const double = (x: int) => x * 2
 
--- Closure em bloco
-const add_print = (x: int, y: int)
-    const sum = x + y
-    io.println(sum)
+-- Closure em bloco (precisa de anotação de tipo: o retorno não é inferido)
+const add_print: func(int, int) -> int = (x: int, y: int)
+    const sum: int = x + y
+    io.println(string(sum))
     return sum
 end
 
--- Pipe operator (`|>`) - Passa o resultado da esquerda como primeiro argumento da direita
-const final = 10 |> double |> add_print(5)
+-- Pipe operator (`|>`) - passa o valor da esquerda como ÚNICO argumento
+-- da função da direita; `a |> f(b)` não é suportado em 0.3.8
+const final: int = 10 |> double
 ```
 
 ## 10. Recursos Adicionais
@@ -305,10 +310,10 @@ const final = 10 |> double |> add_print(5)
 -- Interpolação de string
 const greeting = f"Olá, {name}!"
 
--- Gerenciamento de recursos: 'using' NÃO tem bloco/end próprio,
+-- Gerenciamento de recursos: 'using' exige o tipo e NÃO tem bloco/end próprio,
 -- a limpeza acontece no 'end' da função (ou return/try/break/continue)
-using file = try fs.open_read("data.txt")
-const conteudo = try fs.read_all(file)
+using file: fs.File = try fs.open_read("data.txt")
+const bruto: bytes = try fs.read(file, 256)
 
 -- Apelido de tipo (transparente: mesma coisa, nome menor)
 alias UserMap = map[int, string]
@@ -326,6 +331,7 @@ identity[T](value: T) -> T => value
 - Não existe `func`. Não existe chaves `{}` para blocos (é `end`).
 - Import é sempre **caminho + alias** (`import ori.io as io`), nunca o contrário.
 - `match`: sem ponto antes da variante, sempre `case ... :`.
-- `using` é uma declaração simples — não abre bloco próprio.
+- `using` é uma declaração simples (com tipo: `using f: fs.File = ...`) — não abre bloco próprio.
 - `is` não estreita tipo e não funciona com enum.
 - Use `try` para desembrulhar `result`; `if some(x) = ...` para `optional`.
+- `|>` passa **um** argumento e o lado direito é função sem parênteses (`x |> f`); `x |> f(a)` não é suportado.

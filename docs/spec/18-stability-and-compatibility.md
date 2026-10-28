@@ -81,7 +81,10 @@ A change **incompatible** with already-staged runtimes requires bumping to
 **Additive** `ori_*` symbols do not require a bump, but must be listed in the
 stdlib manifest.
 
-The C / debug backend is **not** an ABI reference.
+The native Cranelift AOT/JIT backends are the ABI reference. C source emission
+was retired by [ADR-0005](../decisions/adr/0005-deprecate-and-retire-c-backend.md);
+native C ABI interoperability (`extern c`, `@c_export`, generated headers)
+remains supported.
 
 ---
 
@@ -94,7 +97,6 @@ These points may change before `1.0`:
 - REPL limits;
 - stdlib APIs marked experimental;
 - generic optimization and binary-size details;
-- the public surface of the C / debug backend;
 - fine details of local inference beyond the documented option B
   (literals + field / index / call / pipe); **global HM stays out**;
 - package / registry formats not yet stabilized;
@@ -116,6 +118,12 @@ limitation of the current compiler, not a planned removal:
 | Higher-kinded types | Declaration parses, no implementation can satisfy it; **out of scope** by decision ([11](11-generics.md)) |
 | `@c_export` collection coverage | Scalar structs, managed struct handles, and direct `optional`/`result` bridges are supported. Direct `list`, `map`, `set`, tuples, nested sum types, and generic structs remain private or unsupported ([19](19-abi.md) §8.3b) |
 | Infinite recursion | Not detected at compile time (undecidable). At runtime the stack guard reports `stack overflow` instead of dying on a bare signal |
+| Open-ended slices | `xs[2..]` and `xs[..]` pass the checker but abort at runtime (`ori list slice bounds out of range`); pass the end explicitly ([05](05-expressions.md)) |
+| Range field access | `r.start` / `r.end` are rejected with `type.field_on_non_struct`; iterate with `for` or keep the bounds in bindings ([04](04-types.md)) |
+| Numeric literal adaptation | An integer literal does not narrow to `u8`/`u16`: `const a: u8 = 42` is `type.type_mismatch`; write `42u8` ([04](04-types.md)) |
+| Pipe with arguments | `a \|> f(b)` is not supported; the right side is a one-argument function reference ([05](05-expressions.md)) |
+| Empty struct literal | `{ }` parses as an empty map and `T { }` reports missing fields; use `core.Default` + `T.default()` ([05](05-expressions.md)) |
+| `.or_return()` receiver | Works on a call result; on a local binding it reports `type.field_on_non_struct` ([09](09-errors.md)) |
 
 ---
 

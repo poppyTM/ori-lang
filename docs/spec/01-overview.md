@@ -215,7 +215,7 @@ Migration aid: `ori migrate-syntax`. Full list: `CHANGELOG.md` `[0.3.0]`.
 | **Option B** | Also omit on **field / index / call / pipe** with a concrete return type; reject `void` / `try` / empty `[]`/`{}` / bare `none` |
 | **Pipe `\|\>`** | **Kept** as first-class Ori syntax (typed as `f(value)`) |
 | **`0.3.8`** | High-performance wave: `@align(N)`, `@noalloc`, `simd[T, N]`, `mem.Region` arenas, and declarative `[native.dependencies]` |
-| **`0.4.0`** | Surface ergonomics: `apply Type: Trait`, `import path as alias`, `array[T, N]`, inherent methods in `struct`, bare trait parameters |
+| **`0.3.8` ergonomics** | Post-S3 surface ergonomics delivered inside the `0.3.8` line (no separate `0.4.0` release): `apply Type: Trait`, `import path as alias`, `array[T, N]`, inherent methods in `struct`, bare trait parameters |
 
 **Still deferred / out of product:** multi-OS distribution and marketplace
 publish (shelved until language, docs, and performance are solid); self-hosting
@@ -228,7 +228,7 @@ publish (shelved until language, docs, and performance are solid); self-hosting
 Ori is a new language. Lessons from early prototypes informed its design; source is not
 compatible with earlier experiments.
 
-| Historical / lab | Ori S3/0.4 |
+| Historical / lab | Ori S3 + post-S3 ergonomics |
 |---|---|
 | Early prototype `text` | `string` |
 | Early Ori `apply Trait to Type` | `apply Type: Trait` (or `apply Type use Trait`) |

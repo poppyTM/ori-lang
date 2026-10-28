@@ -197,6 +197,11 @@ o desenho sem se tornarem uma segunda lista de pendências.
 - [x] Adaptar a monomorfização no backend para resolver os tipos associados em tempo de compilação.
 
 ### 3. Const Generics e Higher-Kinded Types (HKT)
+
+> **Correção 2026-10-28:** HKT nunca foi implementado e é **out of scope** por
+> decisão (spec 11). Os checkboxes abaixo registram a intenção da época, não o
+> estado atual; apenas const generics CT-0 foi entregue.
+
 - [x] Remover as restrições temporárias `generic.unsupported_const_generic` e `generic.unsupported_hkt`.
 - [x] Implementar a sintaxe e a semântica de checagem para parâmetros genéricos de constantes (ex. tamanhos fixos de arrays/bytes).
 - [x] Implementar tipos genéricos parametrizados por outros tipos genéricos (HKT) com suporte a constraints avançadas.
@@ -224,7 +229,7 @@ o desenho sem se tornarem uma segunda lista de pendências.
 - [x] Implementar parser e serializador nativos em Rust no runtime para esse tipo, mantendo o suporte a *pretty print*.
 
 ### **Critérios de Passagem para a Etapa 3:**
-- [x] Traits avançados, const generics e HKT compilando e passando por testes semânticos dedicados.
+- [x] Traits avançados e const generics CT-0 compilando com testes semânticos. HKT **não** foi entregue e permanece fora de escopo.
 - [x] API recursiva de JSON validada com testes de parse/stringificação.
 
 ---

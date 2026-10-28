@@ -54,10 +54,14 @@ Se você abre um arquivo ou uma conexão de rede, você precisa lembrar de fecha
 ```ori
 module app.files
 
-read_config() -> string
+import ori.fs = fs
+import ori.string = str
+
+read_config(path: string) -> result[string, string]
     -- 'using' garante que o arquivo será fechado no 'end'
-    using file = open("config.txt")
-    return file.read_all()
+    using file: fs.File = try fs.open_read(path)
+    const raw: bytes = try fs.read(file, 4096)
+    return str.from_bytes(raw)
 end
 ```
 
@@ -68,11 +72,13 @@ Sem o pipe, para aplicar várias transformações em um dado, você precisaria c
 ```ori
 module app.transform
 
--- Lendo de dentro para fora (confuso)
-const a = print(uppercase(trim(text)))
+import ori.string = str
 
--- Lendo com pipe (claro e linear)
-const b = text |> trim() |> uppercase() |> print()
+-- Lendo de dentro para fora
+const a: string = str.to_upper(str.trim(text))
+
+-- Lendo com pipe (claro e linear): cada etapa recebe um argumento
+const b: string = text |> str.trim |> str.to_upper
 ```
 
 ### Mutação Explícita: `mut`

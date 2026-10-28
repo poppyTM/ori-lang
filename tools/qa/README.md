@@ -9,12 +9,13 @@ Scripts for daily / weekly language quality. The current workspace baseline is
 | [`daily_full.sh`](daily_full.sh) | All fast gates + multifile/async/workspace/examples; external web-package and perf stages are explicitly observational |
 | [`rustfmt_scoped.py`](rustfmt_scoped.py) | Enforces the ratcheted Rust formatting baseline in [`rustfmt_scope.txt`](rustfmt_scope.txt) |
 | [`catalog_lint.sh`](catalog_lint.sh) | Spec 13 ↔ emitted diagnostic codes |
-| [`abi_exports.sh`](abi_exports.sh) | Runtime static/shared exports ↔ stdlib manifest and native declarations |
+| [`abi_exports.sh`](abi_exports.sh) | Runtime static/shared exports ↔ stdlib manifest and native declarations. Validates the built `target/` artifact when staged `runtime/` files are absent; set `ORI_REQUIRE_STAGED_RUNTIME=1` to require a complete package layout. |
 | [`validate_runtime_link.py`](validate_runtime_link.py) | Runtime-link schema, target/profile, artifact names, and optional SHA-256 validation |
 | [`runtime-link.schema.json`](runtime-link.schema.json) | Declarative shape contract consumed by the runtime-link validator |
 | [`residual_audit.sh`](residual_audit.sh) | Product surface + intentional residual negatives |
 | [`examples_smoke.sh`](examples_smoke.sh) | `ori check` over `examples/*`; `ORI_EXAMPLES_COMPILE=1` adds an isolated native build tier and `ORI_EXAMPLES_RUN=name,...` runs a curated subset |
 | [`docs_coverage.sh`](docs_coverage.sh) | Atlas paths, canonical documents, and release-blocking P0 closure |
+| [`docs_codeblocks.py`](docs_codeblocks.py) | Type-checks self-contained `ori` fenced examples in the spec, language, and guide docs |
 | [`validate_atlas.py`](validate_atlas.py) | Dependency-free Atlas schema, status, and path validation |
 | [`fuzz_smoke.py`](fuzz_smoke.py) | Deterministic malformed-byte, truncation, and nesting front-end smoke |
 | [`ori_smith.py`](ori_smith.py) | Deterministic semantic program generator (seeded); AOT/JIT differential oracle |

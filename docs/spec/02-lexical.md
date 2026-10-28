@@ -120,7 +120,7 @@ Some words above are reserved precisely so that the pre-S3 spelling produces a
 **dedicated** diagnostic instead of a confusing generic one. Writing them emits
 a `parse.*_removed` error (see chapter 13):
 
-| Word | Removed form | Canonical S3/0.4+ form |
+| Word | Removed form | Canonical S3 form |
 |---|---|---|
 | `namespace` | `namespace app.main` | `module app.main` |
 | `func` | declaration `func f(...)` | `f(...)` — `func` survives only as the **callable type**: `func(T) -> R` |
@@ -368,7 +368,10 @@ Current implementation status:
 - Built-in attribute names, targets, duplicate uses, and argument shapes are validated.
 - `@deprecated("message")` emits `attr.deprecated` warnings at use sites.
 - `@test` marks concrete no-arg/no-return test functions for `ori test`.
-- `@cfg` filters inactive declarations before name resolution; `@inline` and `@no_inline` are validated but not yet acted on by the optimizer.
+- `@cfg` filters inactive declarations before name resolution. `@inline` and
+  `@no_inline` are read by the HIR leaf inliner: `@no_inline` blocks inlining,
+  and `@inline` lets a leaf body exceed the normal size budget. Neither forces
+  inlining of recursive, async or otherwise ineligible functions.
 - Unknown attributes are rejected with `attr.unknown`.
 - The emitted attribute diagnostics are listed in `docs/spec/13-error-catalog.md`.
 
@@ -395,8 +398,8 @@ Built-in attributes:
 |---|---|---|---|
 | `@test` | function declaration | no arguments; function must have no type parameters, no value parameters, and no return value | Runs through `ori test` |
 | `@deprecated("msg")` | any declaration | exactly one string argument | Emits `attr.deprecated` warning at use sites |
-| `@inline` | function declaration | no arguments | Validated and stored; not acted on by the current backend |
-| `@no_inline` | function declaration | no arguments | Validated and stored; not acted on by the current backend |
+| `@inline` | function declaration | no arguments | Allows the HIR leaf inliner to consider a body above the normal statement budget; other inlining eligibility rules still apply |
+| `@no_inline` | function declaration | no arguments | Excludes the function from HIR leaf inlining |
 | `@noalloc` | function declaration | no arguments | Statically verified: rejects heap allocations, collection literals, string formatting, closures, `await`, `using`, dynamic collection iteration, and calls to functions not marked `@noalloc`; violation emits `perf.allocation_in_noalloc` |
 | `@align(N)` | struct declaration | power-of-two integer between 1 and 64 (1, 2, 4, 8, 16, 32, 64) | Forces struct alignment and padding to at least `N` bytes in Cranelift layout and C export headers (`alignas(N)`); reflected in `ori.mem.align_of` and `ori.mem.size_of` |
 | `@cfg(predicate)` | any top-level declaration | exactly one structured predicate; one `@cfg` per declaration | Removes an inactive declaration before name resolution and type checking |

@@ -1,8 +1,13 @@
 # Plano de Auditoria e Saneamento da Documentação
 
-> **Status:** Ativo e em andamento  
-> **Início:** 2026-09-04  
+> **Status:** Concluído (registro histórico).
+> **Início:** 2026-09-04
 > **Escopo:** Revisão minuciosa, correção de drifts, saneamento e consolidação de todos os diretórios da árvore `docs/`.
+>
+> **Nota de 2026-10-28:** uma revisão posterior encontrou novos drifts
+> (trait genérica, `@inline`, backend C, SIMD `u32/u64`, `buf.alloc`, versão
+> `0.4.0` e identidade de release). Este documento registra a passagem de
+> setembro; ele não é prova de que a documentação atual está correta.
 
 ---
 
@@ -19,7 +24,7 @@
 | **07** | `docs/quality/` | Estratégia de QA, testes diferenciais, fuzzing e conformidade | 10 | 1.685 | **done** | Auditada suíte e estratégia de qualidade; adicionada documentação operacional dos gates automatizados `daily_fast.sh` e `sanitizer_smoke.sh` (ASan/TSan) em `test-strategy.md`; verificada consistência de conformidade e testes diferenciais. |
 | **08** | `docs/operations/` | Desenvolvimento, release e builds reproduzíveis | 4 | 618 | **done** | Auditadas rotas de desenvolvimento, release e builds reproduzíveis; adicionada rota de sanitizers (`sanitizer_smoke.sh` ASan/TSan) em `development.md`; verificados scripts citados (`daily_fast`, `stage_native_runtime`, `package_native_release`, `smoke_native_release`) e pin 0.3.8. |
 | **09** | `docs/security/` | Modelo de ameaças, supply chain e política de código unsafe | 4 | 733 | **done** | Auditados threat model, unsafe-code-policy e supply chain; confirmado que `OriRegion` segue boundary pattern (thin `unsafe extern C` + safe domain), single-cascade-owner e análise estática de escape (`using.escape`, não-`Transferable`) conforme política. |
-| **10** | `docs/product/` | Status de produto, matriz de suporte, versionamento e acessibilidade | 5 | 465 | **done** | Auditados status, matriz de suporte, versionamento e princípios de acessibilidade; alinhada menção de superfície para S3/0.4 ergonomics e mantido pin 0.3.8 com backends nativo/JIT/C-debug. |
+| **10** | `docs/product/` | Status de produto, matriz de suporte, versionamento e acessibilidade | 5 | 465 | **done** | Auditados status, matriz de suporte, versionamento e princípios de acessibilidade; mantido pin 0.3.8. A menção a C-debug foi removida na revisão de 2026-10-28. |
 | **11** | `docs/implementation/` | Padrões de implementação e guias para adicionar features/APIs | 7 | 1.328 | **done** | Auditados padrões, feature-delivery, adding-syntax/type-checker e guias runtime/stdlib; guias descrevem processo (não sintaxe) e seguem válidos; registrada conclusão da wave sintática em `syntax-evolution-plan.md`. |
 | **12** | `docs/decisions/` | Registro de ADRs (Architecture Decision Records) | 6 | 676 | **done** | Auditados ADRs; ADR-0001 permanece registro histórico do corte S3 (não reescrito); sem nova decisão durável exigindo ADR numerado nesta wave. |
 | **13** | `docs/governance/` | Governança da linguagem e processo de RFCs | 3 | 391 | **done** | Auditadas regras de evolução e processo RFC; sem drift, sem menção a formas removidas. |

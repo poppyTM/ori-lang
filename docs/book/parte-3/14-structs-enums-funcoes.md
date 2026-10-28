@@ -212,8 +212,8 @@ end
 
 Exemplo com coleções:
 ```ori
--- O 'map' aplica a closure a cada item
-const dobrados = list_of_numbers |> map((x: int) => x * 2)
+-- O 'map' aplica a closure a cada item (dois argumentos: sem pipe)
+const dobrados = iter.map(list_of_numbers, (x: int) => x * 2)
 ```
 
 ## Tipos Genéricos (Generics)

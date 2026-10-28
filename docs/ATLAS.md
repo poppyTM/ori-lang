@@ -21,7 +21,7 @@ update.
 | Execution | Native AOT; `ori run` may use the staged Cranelift JIT |
 | Compiler implementation through 1.0 | Rust on `main`; Ori-written self-host prototype remains experimental ([ADR-0006](decisions/adr/0006-rust-reference-through-1-0.md)) |
 | Normative source | [`spec/`](spec/README.md) |
-| User guide | [`language/`](language/tour.md) and [`guides/`](guides/README.md) |
+| User guide | [`language/`](language/tour.md), [`guides/`](guides/README.md), and the PT-BR complete reference [`23-referencia-completa.md`](book/parte-4/23-referencia-completa.md) |
 | Open implementation list | [`planning/BACKLOG.md`](planning/BACKLOG.md) |
 | Machine catalog | [`catalog.yaml`](catalog.yaml) |
 

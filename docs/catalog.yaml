@@ -106,6 +106,14 @@ canonical_documents:
     owns: [c-interop-native-abi]
     related_code: [compiler/crates/ori-codegen, compiler/crates/ori-runtime]
 
+  - id: language.reference-pt
+    path: docs/book/parte-4/23-referencia-completa.md
+    domain: user-documentation
+    status: current
+    audience: [language-user]
+    owns: [complete-syntax-and-feature-reference-pt]
+    related_code: [compiler/crates/ori-parser, compiler/crates/ori-types, compiler/crates/ori-driver]
+
   - id: guide.bootstrapping
     path: docs/guides/bootstrapping.md
     domain: user-documentation

@@ -136,7 +136,7 @@ Fast daily gate:
 - `sh tools/qa/daily_fast.sh` (D0 atlas, metadata, ABI exports; S0 check/clippy; S1 unit tests; S2 spec + catalog; S3 memory/security; S8 residual surface).
 
 Sanitizer smoke:
-- `sh tools/qa/sanitizer_smoke.sh` (AddressSanitizer and ThreadSanitizer execution for runtime and embed targets).
+- `sh tools/qa/sanitizer_smoke.sh` (AddressSanitizer and ThreadSanitizer execution for runtime and embed targets). On a toolchain without `-Zsanitizer` it reports `INCOMPLETE` and exits 0; set `ORI_REQUIRE_SANITIZERS=1` in nightly CI to turn that into a hard failure.
 
 Typical progression:
 

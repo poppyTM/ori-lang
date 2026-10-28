@@ -27,7 +27,7 @@ module app.users
 
 process_user(id: int) -> optional[User] =>
     -- Encadeamos operações diretamente com o pipe (|>)
-    db.get_user(id) |> validate_user()
+    db.get_user(id) |> validate_user
 ```
 
 ## O que é "Superfície S3"?

@@ -247,9 +247,9 @@ Rules:
   `impl.trait_not_found`.
 - `message` is **required**: omitting it is `impl.missing_method`, and any
   signature other than `(self) -> string` is `impl.wrong_signature`.
-- The compact header is required — the block holds one trait and nothing else
-  (chapter 08). Writing `use core.Error` on its own line and then a method at
-  the `apply` level is `parse.apply_member_after_use`.
+- Both header forms work: `apply T: core.Error` and `apply T use core.Error`.
+  In an expanded block, free methods and binds must appear **before** any `use`
+  section; a method written after `use` reports `parse.apply_member_after_use`.
 
 Regression tests: `compile_runs_core_error_message_method`,
 `check_rejects_core_error_without_message`,

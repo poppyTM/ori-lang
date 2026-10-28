@@ -67,7 +67,7 @@ Este documento registra o estado atual de implementação da linguagem Ori (conf
 - **HIR Lowering**: Desaçucaramento completo de construções como operador pipe (`|>`), atualização de structs (`x with { field: v } end`), expressões `is`, indexadores e f-strings em chamadas de runtime correspondentes.
 - **using**: Lowering de blocos `using` para injeção automática de chamadas `Disposable.dispose()` na saída do escopo, incluindo caminhos de retorno normal, retornos antecipados (`?`) e panics.
 - **Backend Nativo (Cranelift)**: Rota principal de compilação sem dependência direta de toolchain C. Gera binários nativos executando linkagem própria via `NativeLinker` e empacotamento do runtime para Linux e Windows.
-- **Backend C (Debug/Transpile)**: Mantido apenas como rota de depuração e transpilação com paridade parcial. Rejeita ativamente features não suportadas de concorrência ou async com diagnósticos claros.
+- **Backend C (Debug/Transpile)**: **removido** em 2026-09-05 pela ADR-0005. A rota nativa Cranelift AOT/JIT é a única implementação; C ABI (`extern c`, `@c_export`, headers) permanece.
 
 ---
 
@@ -159,7 +159,7 @@ Todas as coleções listadas abaixo estão integradas com o type-checker, possue
 - **Igualdade dinâmica (`any<Trait>`)**: `==` / `!=` via vtable lookup no runtime nativo quando o trait constraint permite igualdade.
 - **Associated types**: declaração `type Item` em traits; validação no checker e resolução na monomorfização.
 - **Const generics**: parâmetros genéricos de constante (ex.: tamanhos fixos) aceitos pelo parser e checker.
-- **Higher-kinded types (HKT)**: tipos genéricos parametrizados por construtores de tipo, com constraints avançadas.
+- **Higher-kinded types (HKT)**: **não implementado e fora de escopo**; a declaração parseia, mas nenhuma implementação pode satisfazê-la. Ver spec 11.
 - **Igualdade em coleções opacas**: `deque`, `queue`, `stack`, `linked_list`, etc. comparáveis quando elementos suportam `Equatable`.
 - **Propagação estática de traits**: `list<T> is Equatable` somente se `T is Equatable`.
 - **Fronteira de `handle[T]`**: handles continuam ponteiros emprestados, sem

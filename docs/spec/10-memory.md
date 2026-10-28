@@ -300,10 +300,13 @@ For resources that need explicit cleanup (file handles, network connections,
 database connections), use `using`:
 
 ```ori
-read_file(path: string) -> result[string, string]
-    using file: ori.fs.File = try ori.fs.open_read(path)
-    const content: string = try ori.fs.read_all(file)
-    return ok(content)
+import ori.fs = fs
+import ori.string = str
+
+read_head(path: string) -> result[string, string]
+    using file: fs.File = try fs.open_read(path)
+    const raw: bytes = try fs.read(file, 256)
+    return str.from_bytes(raw)
 end
 ```
 

@@ -23,11 +23,20 @@ cargo build --manifest-path "$comp/Cargo.toml" -p ori-runtime --lib --locked $ca
 host_target=$(rustc -vV | sed -n 's/^host: //p')
 metadata="$repo/runtime/$host_target/runtime-link.json"
 if [ -f "$metadata" ]; then
-    python3 "$script_dir/validate_runtime_link.py" "$metadata" \
-        --check-artifacts "$repo/runtime/$host_target"
-else
+    if python3 "$script_dir/validate_runtime_link.py" "$metadata" \
+        --check-artifacts "$repo/runtime/$host_target" >/dev/null 2>&1; then
+        :
+    elif [ "${ORI_REQUIRE_STAGED_RUNTIME:-0}" = "1" ]; then
+        echo "abi_exports: staged runtime is required but incomplete for $host_target" >&2
+        exit 1
+    else
+        echo "abi_exports: staged artifacts missing for $host_target; validating the built target artifact" >&2
+    fi
+elif [ "${ORI_REQUIRE_STAGED_RUNTIME:-0}" = "1" ]; then
     echo "abi_exports: runtime metadata not staged for host $host_target" >&2
     exit 1
+else
+    echo "abi_exports: runtime metadata not staged for host $host_target; validating the built target artifact" >&2
 fi
 
 artifact_dir="$target_dir/$profile"

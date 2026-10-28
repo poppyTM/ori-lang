@@ -54,14 +54,15 @@ The Atlas/catalog pair owns document routing. This table is the review index;
 
 ## Major gaps and current limitations
 
-- Fixed arrays are implemented inline but reject managed element types; the
-  C/debug backend does not have full parity.
-- Generic traits, higher-kinded constructors, and symbolic arithmetic over const
-  parameters remain restricted. The docs show only accepted forms.
-- Async/concurrency is a native state-machine feature. The C/debug backend
-  rejects async, tasks, channels, atomics, and native networking.
-- `@inline`, `@no_inline`, and `@cfg` are validated and stored but do not yet
-  change optimization or conditional inclusion.
+- Fixed arrays are implemented inline but reject managed element types. C
+  source emission was subsequently removed by ADR-0005.
+- Generic traits are applicable; higher-kinded constructors are out of scope,
+  and symbolic arithmetic over const parameters remains restricted.
+- Async/concurrency is a native state-machine feature; there is no C/debug
+  backend after ADR-0005.
+- `@cfg` filters before name resolution; `@inline`/`@no_inline` are read by the
+  HIR leaf inliner (the earlier audit statement that they were inert was
+  corrected on 2026-10-28).
 - ABI-1 intentionally keeps collection layouts private. Direct collections,
   callbacks, nested sum bridges, generic/empty structs, and dynamic collection
   handles are outside the direct export contract.
@@ -91,6 +92,14 @@ tutorial. They are linked from the relevant Atlas entries and specifications.
 No current user guide was found to describe a compiler feature that does not
 exist. Historical package/web plans remain available only with an explicit
 historical or external-scope label.
+
+> **Correction (2026-10-28):** later drift was found despite this statement.
+> `docs/language/advanced.md` described a non-existent `buf.alloc`, the tour and
+> spec 11 described generic traits as declaration-only after they had become
+> applicable, and the SIMD table listed `u32`/`u64` combinations the checker
+> rejects. Those items were corrected; the claim above describes the August
+> audit, not a permanent guarantee. The missing gate was executable validation
+> of documentation code fences and API names.
 
 ## Documentation architecture
 

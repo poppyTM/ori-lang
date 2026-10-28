@@ -154,15 +154,18 @@ Field access on an enum variant's payload uses the variant's field names.
 ```ori
 items[0]          -- index: returns element type T
 items[2..5]       -- slice: returns list[T], elements at 2, 3, 4
-items[2..]        -- slice from index 2 to end
 items[..5]        -- slice from start to index 5
-items[..]         -- full copy
 text[0..3]        -- string slice: characters at 0, 1, 2
 ```
 
 Index bounds are checked at runtime. Out-of-bounds is a runtime panic.
 Slice bounds are checked at runtime and use an exclusive end:
 `0 <= start <= end <= len`. Invalid bounds are a runtime panic.
+
+**Current status (0.3.8):** the open-ended forms `items[2..]` and `items[..]`
+pass the checker but abort at runtime with
+`ori list slice bounds out of range` (string slices likewise). Pass the end
+explicitly — `items[2..len]` — until the runtime handles the omitted bound.
 
 ---
 
@@ -265,18 +268,21 @@ return type is concrete:
 const doubled = 21 |> double
 ```
 
-The pipe operator passes the left-hand value as the first argument to the
-right-hand function (or function call with further args).
+The pipe operator passes the left-hand value as the **only** argument to the
+right-hand function. The right side is a function reference (a name or a module
+path), not a call with arguments:
 
 ```ori
-const result: list[string] =
-    users
-    |> iter.filter((u: User) => u.active)
-    |> iter.map((u: User) => u.name)
+const doubled: int = 21 |> double
+const upper: string = "ori" |> str.to_upper
 ```
 
-`a |> f(b)` is equivalent to `f(a, b)`.
 `a |> f` is equivalent to `f(a)`.
+
+**Current status (0.3.8):** `a |> f(b)` is **not** supported. The checker
+evaluates `f(b)` as an ordinary call first and reports `type.arg_count_mismatch`
+(or `type.type_mismatch`) instead of passing `a` as the first argument. Call the
+function directly when it takes more than one argument.
 
 Regression: `compile_runs_pipe_operator_native`.
 
@@ -362,16 +368,22 @@ draw({ x: 10, y: 20})
 
 -- Nested
 const l: Line = { start: { x: 0, y: 0}, end: { x: 5, y: 5}}
-
--- With Default: all fields use their default values
-const p: Point = { }
 ```
 
 The `{ ` prefix is unambiguous — it cannot be confused with a map literal
 (`{"key": value}`) or a block.
 
+**Current status (0.3.8):** the empty literal `{ }` is parsed as an empty map,
+not as an all-defaults struct, and `Point { }` still reports the missing fields.
+Implement `core.Default` and call the associated function explicitly:
+
+```ori
+const p: Point = Point.default()
+```
+
 Rules:
-- All fields must be provided unless the type implements `Default`.
+- All fields must be provided; `core.Default` supplies `T.default()`, not an
+  implicit empty literal.
 - Field names are required (positional construction is not allowed).
 - If the expected type cannot be inferred, `{ ...}` is a compile error:
   `error[type.anon_struct_type_unknown]`.

@@ -2,7 +2,9 @@
 
 > **Versão âncora:** Ori 0.3.x (S3)
 
-Esta é uma versão super compacta e imprimível da sintaxe do Ori.
+Esta é uma versão super compacta e imprimível da sintaxe do Ori. Os trechos são
+fragmentos de corpo de função, salvo quando mostram `module`; nomes usados nos
+exemplos (`fs`, `io`, `lista`) são os aliases de import correspondentes.
 
 ### Estrutura e Módulos
 ```ori
@@ -47,7 +49,7 @@ struct User
     id: int
 end
 const u = User { id: 1 }
-const u2 = u with { id: 2 } end
+const u2: User = u with { id: 2 } end
 
 -- Enum
 enum Option
@@ -63,7 +65,9 @@ trait Show
     show(self)
 end
 
--- uma trait: cabeçalho compacto (obrigatório)
+-- as duas formas de cabeçalho são aceitas:
+-- apply User: Show      (canônica, aceita várias traits)
+-- apply User use Show   (compacta S3)
 apply User use Show
     show(self) => io.println(self.id)
 end
@@ -116,9 +120,9 @@ end
 ### Tratamento de Erros e Opcionais
 ```ori
 const v = some(10)
-const v2 = none
+const v2: optional[int] = none
 const r = ok(5)
-const r2 = err("Falhou")
+const r2: result[int, string] = err("Falhou")
 
 if some(x) = v
     -- desempacotou v
@@ -145,14 +149,14 @@ const r = 1..10
 
 ### Closures e Pipes
 ```ori
-const f = (x) => x * 2
-const y = 5 |> f
+const f: func(int) -> int = (x: int) => x * 2
+const y: int = 5 |> f
 ```
 
 ### Outros Recursos
 ```ori
--- Limpeza garantida de recursos — 'using' NÃO abre bloco próprio
-using file = try fs.open_read("arq.txt")
+-- Limpeza garantida de recursos — 'using' exige o tipo e NÃO abre bloco próprio
+using file: fs.File = try fs.open_read("arq.txt")
 -- file é fechado no `end` da função (ou return/try/break/continue)
 
 -- Interpolação

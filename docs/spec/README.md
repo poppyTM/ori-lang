@@ -25,7 +25,7 @@ Product docs index: [../README.md](../README.md).
 
 | Fact | Value |
 |------|--------|
-| Canonical surface | S3/0.4+: `module`, `public`, `import path as alias`, `list[T]`, `array[T, N]`, `simd[T, N]`, `end` blocks, `apply Type: Trait` |
+| Canonical surface | S3 + post-S3 ergonomics (delivered in `0.3.8`): `module`, `public`, `import path as alias`, `list[T]`, `array[T, N]`, `simd[T, N]`, `end` blocks, `apply Type: Trait` |
 | Identifiers | **snake_case** functions/modules; **PascalCase** types (not camelCase product default) |
 | Visibility | **`public`** (not `pub`) |
 | Memory | ARC + cooperative cycle collection |

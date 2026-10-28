@@ -22,7 +22,7 @@ identity[T](value: T) -> T
 end
 
 first[T](items: list[T]) -> optional[T]
-    if len(items) == 0
+    if ori.list.len(items) == 0
         return none
     end
     return some(items[0])
@@ -261,8 +261,9 @@ apply Config use Cloneable
 end
 ```
 
-The compact header is required here: the block holds one trait and nothing else
-(chapter 08). `self` is an explicit first parameter on the implementing method.
+Both header forms are accepted here — `apply Config: Cloneable` and
+`apply Config use Cloneable` (chapter 08). `self` is an explicit first parameter
+on the implementing method.
 
 ---
 
@@ -392,18 +393,34 @@ This is a deliberate rejection, not a missing milestone:
 
 Use a concrete trait per container, or the alias mechanism above.
 
-#### Generic traits are declaration-only
+#### Generic traits
 
-A trait may be *declared* with type parameters (`trait Container[Item]`), but it
-**cannot be applied**:
+A trait may be declared with type parameters and **applied** with positional
+arguments in the `use` section:
 
-- `apply IntStack use Stackable[int]` — `parse.expected_identifier`; `use`
-  accepts a bare trait name, with no type arguments.
-- `apply IntStack use Stackable` with concrete method types —
-  `impl.wrong_signature`, because the trait parameter is never bound.
+```ori
+trait Container[Item]
+    first(self) -> Item
+end
 
-Until `use Trait[Arg]` is implemented, declare one concrete trait per element
-type.
+apply IntBox use Container[int]
+    first(self) -> int
+        return self.v
+    end
+end
+```
+
+Rules:
+
+- arguments are **required**: `use Container` on a generic trait reports
+  `impl.trait_args_missing`;
+- the argument count must match the declaration
+  (`impl.trait_arg_count_mismatch`);
+- the implementation signature is checked against the **instantiated** trait
+  (`impl.wrong_signature`).
+
+The same trait can therefore be implemented at several element types in one
+program.
 
 #### Variadic type parameters
 

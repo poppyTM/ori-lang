@@ -171,9 +171,10 @@ When a function returns `void`, bare `return` exits early.
 ### `result[T, E]` and propagation
 
 ```ori
-read_file(path: string) -> result[string, string]
+read_head(path: string) -> result[string, string]
     const file: ori.fs.File = try ori.fs.open_read(path)
-    return ori.fs.read_all(file)
+    const raw: bytes = try ori.fs.read(file, 256)
+    return ori.string.from_bytes(raw)
 end
 ```
 

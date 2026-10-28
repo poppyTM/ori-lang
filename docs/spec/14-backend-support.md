@@ -29,7 +29,10 @@ AOT artifact mode exists in JIT. Shared behavior is covered by
 | Structs, enums and tuples | yes | Native ABI has layout tests. |
 | Traits and `any[Trait]` | yes | Native dynamic dispatch. |
 | Generics and monomorphization | yes | Generic functions and imported generic traits. |
-| Lists, maps, sets, deques, queues, stacks | yes | Native runtime owns ARC edges. |
+| Lists, maps, sets, deques, queues, stacks | yes | Native runtime owns ARC edges. Optional-returning deque/queue/stack helpers re-encode narrow scalar payloads at the boundary. |
+| Fixed-size arrays (`array[T, N]`) | yes | Inline scalar and inline-struct elements; managed elements are rejected by the checker. |
+| Buffers and slices (`buffer[T]`, `slice[T]`) | partial | Runtime storage is one 64-bit cell per element; scalar widths are encoded/decoded at the boundary. Index read/write is native; `buffer` is not a raw C array. |
+| Portable SIMD (`simd[T, N]`) | partial | Arithmetic and lane reads for the combinations accepted by the checker; `u32`/`u64` element vectors are rejected. |
 | Structural equality | partial | Primitives, `bytes`, `optional`, `result`, tuples, lists, generic structs, sets and maps when keys/elements support equality. |
 | Hash tables, trees, graphs, heaps | yes | Native stdlib operations. |
 | JSON | yes | Native runtime-backed `json.Value`, parsing and serialization. |

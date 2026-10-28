@@ -26,14 +26,19 @@
 
 | Target | Native build | Runtime staging | JIT cdylib | Package/smoke intent | Notes |
 |---|---|---|---|---|---|
-| `x86_64-unknown-linux-gnu` | CI validated | versioned development baseline | supported | `.tar.gz` and `.deb` routes | Primary Linux development target |
-| `x86_64-pc-windows-msvc` | CI validated | versioned development baseline | supported | `.zip`/installer route | Requires documented Windows toolchain for AOT |
-| `x86_64-pc-windows-gnu` | CI generated | CI staging | intended | release matrix route | Not a versioned local baseline |
-| `x86_64-apple-darwin` | CI generated | CI staging | intended | release matrix route | Requires macOS linker/tooling for AOT |
-| `aarch64-apple-darwin` | CI generated | CI staging | intended | release matrix route | Host architecture selection must use staged aarch64 runtime |
+| `x86_64-unknown-linux-gnu` | CI validated (required) | versioned development baseline | supported | `.tar.gz` and `.deb` routes | Primary Linux development target |
+| `x86_64-pc-windows-msvc` | Release workflow validated; `native-route` advisory | versioned development baseline | supported | `.zip`/installer route | Requires documented Windows toolchain for AOT |
+| `x86_64-pc-windows-gnu` | Release workflow generated; `native-route` advisory | CI staging | intended | release matrix route | Not a versioned local baseline |
+| `x86_64-apple-darwin` | Release workflow generated; `native-route` advisory | CI staging | intended | release matrix route | Requires macOS linker/tooling for AOT |
+| `aarch64-apple-darwin` | Release workflow generated; `native-route` advisory | CI staging | intended | release matrix route | Host architecture selection must use staged aarch64 runtime |
 | Other triples | Best effort or unsupported | not guaranteed | not guaranteed | none | Requires explicit target work and evidence |
 
-A target is not promoted to supported solely because Rust/Cranelift can emit an object. Runtime, linking, execution, package, and smoke evidence are required.
+`native-route.yml` makes only `linux-gnu` a required status
+(`continue-on-error` is set for the other matrix entries). Windows and macOS are
+required in the tag release packaging workflow; they are advisory in the
+per-push native-route workflow. A target is not promoted to supported solely
+because Rust/Cranelift can emit an object: runtime, linking, execution, package,
+and smoke evidence are required.
 
 ## Tooling
 

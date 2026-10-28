@@ -7,7 +7,7 @@
 Ori is a reading-first, explicitly typed programming language compiled to native
 code (**AOT**), with optional JIT for `ori run`. Its compiler is written in Rust.
 
-**Surface S3/0.4 (`0.3.0` + ergonomics):** Auk9-inspired readable syntax on the Ori feature engine.
+**Surface S3 + post-S3 ergonomics (delivered in `0.3.8`):** Auk9-inspired readable syntax on the Ori feature engine.
 See [manifesto](docs/spec/00-manifesto.md) — Ori exists for **compiler study**,
 **AI-assisted programming**, and **ND-friendly readability**, **not** market
 competition. The Auk9 lab is **retired as a product**; the living surface is Ori.
@@ -94,9 +94,9 @@ shorter inference chains, fewer hidden rules, and clearer error messages.
 
 | Area | Status |
 |---|---|
-| Version | **S3/0.4 surface** · inference B **`0.3.1`** · workspace **`0.3.8-dev`** (latest release `v0.3.8`) |
+| Version | **S3 + post-S3 ergonomics** · inference B **`0.3.1`** · workspace **`0.3.8-dev`** (latest release `v0.3.8`) |
 | Stability | pre-1.0; S3 hard-breaks pre-0.3 syntax; further change still possible |
-| Compiler | Rust workspace under `compiler/` (lexer → parser → HIR → types → Cranelift + runtime) |
+| Compiler | Rust workspace under `compiler/` (lexer → parser → types → HIR → Cranelift + runtime) |
 | Native backend | Cranelift AOT + packaged `ori-runtime`; ABI tag `ori-native-abi-1` |
 | `ori run` | JIT by default when a runtime cdylib is available |
 | `ori compile` / `ori test` | AOT; bundled `rust-lld` first, then the OS linker |
@@ -391,8 +391,8 @@ The compiler is split into focused crates:
 | `ori-lexer` | tokenization |
 | `ori-ast` | AST node definitions |
 | `ori-parser` | recursive descent parser |
-| `ori-hir` | name resolution and lowered high-level IR |
-| `ori-types` | type system, stdlib manifest, and checker contracts |
+| `ori-hir` | typed HIR lowering, generics/monomorphization, and optimization |
+| `ori-types` | definitions, name resolution, type system, checker, and stdlib manifest |
 | `ori-codegen` | Cranelift native backend, JIT path, and native FFI headers |
 | `ori-runtime` | native runtime library and runtime ABI |
 | `ori-diagnostics` | diagnostic codes and rendering support |

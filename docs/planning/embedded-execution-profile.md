@@ -29,7 +29,7 @@ Não será “outra Ori”. Será um perfil com capabilities e runtime menores.
 - não há allocator injetável;
 - não há acesso público seguro a volatile/MMIO, interrupts ou seções de link;
 - fixed arrays aceitam somente elementos inline compatíveis;
-- C/debug não é uma rota freestanding de produto.
+- C source emission foi removido; a rota freestanding usa apenas o backend nativo.
 
 ## 4. Fases
 

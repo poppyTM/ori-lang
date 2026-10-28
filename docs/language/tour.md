@@ -345,9 +345,9 @@ const small: Buffer[size: 8]  = Buffer { used: 0 }
 const large: Buffer[size: 16] = Buffer { used: 0 }   -- a different type
 ```
 
-Two limits worth knowing: a generic **trait** can be declared but not applied,
-and higher-kinded types (a parameter standing for `list`/`optional` itself) are
-deliberately out of scope. See
+A generic **trait** can be declared **and applied** with positional arguments
+(`apply IntBox use Container[int]`). Higher-kinded types (a parameter standing
+for `list`/`optional` itself) are deliberately out of scope. See
 [spec/11-generics.md](../spec/11-generics.md).
 
 ---

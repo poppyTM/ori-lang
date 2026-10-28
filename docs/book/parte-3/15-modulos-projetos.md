@@ -127,7 +127,7 @@ Isso cria fronteiras (boundaries) limpas. Em vez de o usuário importar `app.int
 
 ## Por que Aliases são Importantes?
 
-O uso obrigatório do sinal de igual (`=`) em imports força o isolamento.
+O alias explícito no import (`import path as alias`, ou `= alias`) força o isolamento: você lê de onde o nome veio.
 
 **Sem aliases (como em outras linguagens, que fica bagunçado):**
 ```text

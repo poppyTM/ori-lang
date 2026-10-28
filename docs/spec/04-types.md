@@ -391,10 +391,13 @@ const first: float32 = c[0]          -- lane extraction
 
 | Element Type | Supported Lanes | Register Width |
 |---|---|---|
-| `float32`, `int32`, `u32` | 2, 4, 8, 16 | 64-bit, 128-bit, 256-bit, 512-bit |
-| `float64`, `int64`, `u64` | 2, 4 | 128-bit, 256-bit |
+| `float32`, `int32` | 2, 4, 8, 16 | 64-bit, 128-bit, 256-bit, 512-bit |
+| `float64`, `int64` | 2, 4 | 128-bit, 256-bit |
 | `int16`, `u16` | 4, 8, 16 | 64-bit, 128-bit, 256-bit |
 | `int8`, `u8` | 8, 16 | 64-bit, 128-bit |
+
+The unsigned 32/64-bit element combinations are deliberately not part of the
+current surface; the checker rejects them with `type.invalid_simd_type`.
 
 ---
 
@@ -421,16 +424,20 @@ const span: slice[u32] = ori.buffer.as_slice(pixels)
 
 - **Elements must be inline.** Exactly the same rule as `array` (`Inline(T)`
   above): `buffer[string]`, `buffer[list[int]]`, etc. are rejected with
-  `type.array_element_not_inline` (handled as `type.buffer_element_not_inline`
-  once the diagnostic name is disambiguated). Empty structs and recursive
-  structs are not inline.
+  `type.array_element_not_inline`, the shared inline-storage diagnostic.
+  Empty structs and recursive structs are not inline.
 - **Allocated with `ori.buffer.new(len)`.** `len` is an `int`; `len < 0` is
   rejected. Zero is valid.
-- **Length-aware, indexed.** `buf[i]` is `T` (`i` may be `int`, bounds checked
-  at compile time for constants and at runtime otherwise). `buf[i] = v`
-  stores `v`. A length mismatch at construction is `type.buffer_length_mismatch`.
+- **Length-aware, indexed.** `buf[i]` is `T` (`i` is an `int`). The length is
+  not part of the type, so every buffer index is bounds-checked at runtime;
+  `buf[i] = v` stores `v` through the same check.
 - **Bounds-checked assignment.** `buf[i] = v` is an `LValue::Index` whose
   index type is inferred as `int` (like `list[i] = v` and `array[i] = v`).
+- **Storage cell.** The native runtime stores one 64-bit cell per element.
+  Scalar values are encoded into and decoded from that cell by the backend, so
+  `buffer[u32]`, `buffer[float32]`, `buffer[float64]`, and `buffer[bool]` keep
+  their declared logical type. The buffer is not a raw C array and its cell
+  stride must not be assumed by FFI or GPU code.
 - **`ori.mem.size_of` reports a heap pointer** for `buffer` (the header, not the
   payload), consistent with `list`/`slice`.
 - **Valid everywhere a collection is valid in `check_collection_runtime_limits`.**
@@ -541,11 +548,14 @@ The range `a..b` includes both `a` and `b`.
 - If `a > b`: descending (9, 8, 7, ..., 0)
 - If `a == b`: single element
 
-Current v1 contract:
+Current v1 contract: a range is **iterable** and exposes **no field accessors**.
+`r.start` and `r.end` are rejected with `type.field_on_non_struct`; keep the
+bounds in ordinary bindings when they are needed.
 
 ```ori
-r.start       -- int: first value
-r.end         -- int: last value
+for i in 0..9
+    io.print(string(i))
+end
 ```
 
 `length()` and `contains(...)` are not range methods in v1. Use `for` to
@@ -749,13 +759,22 @@ compile error.
 
 Ori does not have implicit type coercion. All conversions are explicit.
 
-**Integer widening** is not implicit. Use the conversion functions:
+**Integer widening** is not implicit. `int(value)` converts an integer value
+to `int` (from any integer width or signedness); `float(value)` converts an
+integer to `float`:
 
 ```ori
-const n: int  = 42
-const b: u8   = u8(n)         -- explicit narrowing (runtime check)
-const w: int64 = int64(n)     -- explicit widening
+const n: int   = 42
+const back: int = int(7u64)    -- unsigned value -> int
+const f: float = float(n)      -- integer -> float
+const b: u8    = 200u8         -- narrow literal uses the suffix
 ```
+
+There is **no** `u8(v)`/`i8(v)`/`u16(v)`/`u32(v)`/`u64(v)` conversion
+function, and `int(3.9)` is rejected. Narrow values come from suffixed literals,
+`bytes.get`, or bitwise operations. An integer literal does not adapt to `u8`:
+`const b: u8 = 42` is `type.type_mismatch`; write `42u8` (out of range is
+`type.numeric_literal_out_of_range`).
 
 **String conversion:** `string(value)` accepts built-in scalars, `string`
 itself, and concrete user-defined values that implement

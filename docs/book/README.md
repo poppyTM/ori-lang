@@ -1,8 +1,8 @@
 # Livro Ori — laboratório de linguagem
 
-> **Versão do livro:** `0.3.x-book.4` (auditoria completa + expansão 2026-07-19)  
-> **Âncora da linguagem:** Ori **0.3.x** (superfície S3 + inferência opção B)  
-> **Idioma:** português na prosa · código em sintaxe S3 (inglês de API)  
+> **Versão do livro:** `0.3.x-book.5` (auditoria completa + referência do cap. 23 em 2026-10-28)
+> **Âncora da linguagem:** Ori **0.3.x** (superfície S3 + inferência opção B)
+> **Idioma:** português na prosa · código em sintaxe S3 (inglês de API)
 > **Status:** Contrato narrativo e explicativo (autossuficiente) — desenhado para máxima legibilidade e aprendizado, sem exigir idas constantes à especificação.
 > **Revisão 2026-07-19:** cada capítulo foi reconferido contra o compilador real
 > (`ori check`/`ori run` ao vivo) e contra o CLI/stdlib/catálogo de diagnósticos
@@ -11,6 +11,8 @@
 > comandos e variáveis de ambiente do CLI, e o formato real dos códigos de
 > diagnóstico. Adicionado: guards de `match`, índice completo da stdlib (~34
 > módulos) e do CLI (~20 comandos), limites reais do `is`, e mais.
+>
+> **Revisão 2026-10-28:** novo capítulo 23 — referência completa de sintaxe e recursos, com exemplos completos verificados contra o compilador `ori 0.3.8` (`ori check`/`ori run`). Correções de fidelidade ao longo do livro (`pipe`, `using`, leitura de arquivo, conversões, `simd` e `ori.iter`).
 
 ## PDF
 
@@ -45,7 +47,7 @@ Não revive sintaxe pré-S3.
 | Ideia e propósito | [Parte I](parte-1/) |
 | Como o compilador e o time trabalham | [Parte II](parte-2/) |
 | Aprender a programar | [Parte III](parte-3/) |
-| Consulta rápida | [Parte IV](parte-4/) · [Cheat sheet](apendices/A-cheat-sheet.md) |
+| Consulta rápida | [Parte IV](parte-4/) · [Cheat sheet](apendices/A-cheat-sheet.md) · [Referência completa](parte-4/23-referencia-completa.md) |
 
 Cada capítulo segue o [template](TEMPLATE.md): TL;DR → exemplo → explicação →
 o que memorizar → links.
@@ -85,6 +87,7 @@ o que memorizar → links.
 20. [Stdlib: índice de consulta](parte-4/20-stdlib-indice.md)
 21. [Diagnostics mais comuns](parte-4/21-diagnostics.md)
 22. [Estabilidade, ABI e limites](parte-4/22-estabilidade-abi-limites.md)
+23. [Referência completa: sintaxe e recursos](parte-4/23-referencia-completa.md)
 
 ### Apêndices
 
